@@ -1,10 +1,10 @@
 const express = require('express');
+const auth = require('../middleware/auth');
+const { listCategories } = require('../controllers/categories.controller');
 
 const router = express.Router();
 
-// Placeholder. Skill-category endpoints land in a later step.
-router.all('*', (req, res) => {
-  res.status(501).json({ error: 'categories: not implemented yet' });
-});
+// Any authenticated user can read the skill categories.
+router.get('/', auth, listCategories);
 
 module.exports = router;
