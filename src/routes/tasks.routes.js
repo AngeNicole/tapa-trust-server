@@ -1,10 +1,12 @@
 const express = require('express');
+const auth = require('../middleware/auth');
+const requireRole = require('../middleware/requireRole');
+const { createTask, listMyTasks, getTask } = require('../controllers/tasks.controller');
 
 const router = express.Router();
 
-// Placeholder. Task posting/listing endpoints land in a later step.
-router.all('*', (req, res) => {
-  res.status(501).json({ error: 'tasks: not implemented yet' });
-});
+router.post('/', auth, requireRole('requester'), createTask);
+router.get('/', auth, requireRole('requester'), listMyTasks);
+router.get('/:id', auth, getTask);
 
 module.exports = router;
