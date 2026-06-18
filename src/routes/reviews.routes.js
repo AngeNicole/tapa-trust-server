@@ -1,10 +1,10 @@
 const express = require('express');
+const auth = require('../middleware/auth');
+const requireRole = require('../middleware/requireRole');
+const { createReview } = require('../controllers/reviews.controller');
 
 const router = express.Router();
 
-// Placeholder. Review endpoints land in a later step.
-router.all('*', (req, res) => {
-  res.status(501).json({ error: 'reviews: not implemented yet' });
-});
+router.post('/', auth, requireRole('requester'), createReview);
 
 module.exports = router;
