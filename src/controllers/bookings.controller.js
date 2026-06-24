@@ -60,68 +60,6 @@ function parseId(value) {
 }
 
 // =====================================================================
-// Create
-// =====================================================================
-
-// POST /api/bookings  (role requester)  body { task_id, worker_id }
-async function createBooking(req, res, next) {
-  const { task_id, worker_id } = req.body || {};
-  if (!task_id || !worker_id) {
-    return res.status(400).json({ error: 'task_id and worker_id are required' });
-  }
-
-  const client = await pool.connect();
-  try {
-    await client.query('BEGIN');
-
-    const task = await client.query('SELECT user_id FROM tasks WHERE task_id = $1', [task_id]);
-    if (!task.rows[0]) {
-      await client.query('ROLLBACK');
-      return res.status(404).json({ error: 'Task not found' });
-    }
-    if (task.rows[0].user_id !== req.user.user_id) {
-      await client.query('ROLLBACK');
-      return res.status(403).json({ error: 'You can only book your own tasks' });
-    }
-
-    const worker = await client.query('SELECT worker_id, user_id FROM workers WHERE worker_id = $1', [worker_id]);
-    if (!worker.rows[0]) {
-      await client.query('ROLLBACK');
-      return res.status(404).json({ error: 'Worker not found' });
-    }
-
-    const booking = await client.query(
-      `INSERT INTO bookings (task_id, worker_id, user_id, status)
-       VALUES ($1, $2, $3, 'pending')
-       RETURNING booking_id`,
-      [task_id, worker_id, req.user.user_id]
-    );
-    const bookingId = booking.rows[0].booking_id;
-
-    // Every booking gets its payment row and check-in record up front.
-    await client.query(
-      `INSERT INTO payment_status (booking_id, status) VALUES ($1, 'pending')`,
-      [bookingId]
-    );
-    await client.query(
-      'INSERT INTO check_in_record (booking_id) VALUES ($1)',
-      [bookingId]
-    );
-    await client.query(`UPDATE tasks SET status = 'assigned' WHERE task_id = $1`, [task_id]);
-    await createNotification(client, worker.rows[0].user_id, 'booking_request', 'You have a new booking request.');
-
-    const view = await bookingViewById(bookingId, client);
-    await client.query('COMMIT');
-    return res.status(201).json(view);
-  } catch (err) {
-    await client.query('ROLLBACK');
-    return next(err);
-  } finally {
-    client.release();
-  }
-}
-
-// =====================================================================
 // List (scoped to caller)
 // =====================================================================
 
@@ -408,7 +346,6 @@ function rebook(req, res, next) {
 }
 
 module.exports = {
-  createBooking,
   listBookings,
   acceptBooking,
   checkin,

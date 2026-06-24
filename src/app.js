@@ -3,7 +3,6 @@ const cors = require('cors');
 
 const authRoutes = require('./routes/auth.routes');
 const workersRoutes = require('./routes/workers.routes');
-const tasksRoutes = require('./routes/tasks.routes');
 const bookingsRoutes = require('./routes/bookings.routes');
 const reviewsRoutes = require('./routes/reviews.routes');
 const savedWorkersRoutes = require('./routes/savedWorkers.routes');
@@ -28,7 +27,6 @@ app.get('/api/health', (req, res) => {
 // --- feature routes (placeholders for now) ---
 app.use('/api/auth', authRoutes);
 app.use('/api/workers', workersRoutes);
-app.use('/api/tasks', tasksRoutes);
 app.use('/api/bookings', bookingsRoutes);
 app.use('/api/reviews', reviewsRoutes);
 app.use('/api/saved-workers', savedWorkersRoutes);

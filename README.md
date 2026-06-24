@@ -139,14 +139,14 @@ return `403`, missing resources `404`, and bad/missing fields `400`.
 
 ### Tasks
 
-- `POST /tasks` _(requester)_ — create an open task (`title`, optional `category_id`/`description`/`location`)
-- `GET  /tasks` _(requester)_ — the caller's own tasks
-- `GET  /tasks/:id` — a single task
+There is **no requester-facing task API**. In the browse-and-book model requesters
+never post tasks: a booking auto-creates its task server-side (see
+`POST /bookings/book/:workerId`). The `tasks` table is internal — read via the
+booking views and worker history, written only by booking creation/completion.
 
 ### Bookings — the trust loop
 
-- `POST /bookings/book/:workerId` _(requester)_ — **book from a worker profile** (the requester entry point): auto-creates a minimal task server-side, then a pending booking + payment + check-in. Requesters never post a task.
-- `POST /bookings` _(requester)_ — _legacy/internal_, `task_id`-based booking creation. Retained for the trust-loop test suite; not part of the requester product flow.
+- `POST /bookings/book/:workerId` _(requester)_ — **book from a worker profile** (the requester entry point): auto-creates the task server-side, then a pending booking + payment + check-in. Requesters never post a task.
 - `GET  /bookings` — bookings scoped to the caller (requester sees their own; worker sees theirs)
 - `POST /bookings/:id/accept` _(worker)_ — `pending` → `accepted`
 - `POST /bookings/:id/checkin` _(worker)_ — record start time
