@@ -46,9 +46,11 @@ CREATE TABLE workers (
   name       VARCHAR(120) NOT NULL,
   skills     TEXT,                                    -- comma-separated / free text for Tier 1
   bio        TEXT,
-  rating     NUMERIC(2,1) NOT NULL DEFAULT 0,         -- 0.0 .. 5.0
-  tier       VARCHAR(30)  NOT NULL DEFAULT 'Unverified',
-  created_at TIMESTAMPTZ  NOT NULL DEFAULT now()
+  rating       NUMERIC(2,1) NOT NULL DEFAULT 0,       -- 0.0 .. 5.0
+  tier         VARCHAR(30)  NOT NULL DEFAULT 'Unverified',
+  is_available BOOLEAN      NOT NULL DEFAULT false,   -- shown in browse only when true
+  photo        TEXT,                                  -- optional profile photo URL/ref
+  created_at   TIMESTAMPTZ  NOT NULL DEFAULT now()
 );
 
 -- skill_categories: the service categories a task can belong to.

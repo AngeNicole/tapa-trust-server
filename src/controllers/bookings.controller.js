@@ -1,4 +1,5 @@
 const { pool } = require('../config/db');
+const { createNotification } = require('./notifications.controller');
 
 // =====================================================================
 // BookingView — the exact JSON the client expects for a booking.
@@ -83,7 +84,7 @@ async function createBooking(req, res, next) {
       return res.status(403).json({ error: 'You can only book your own tasks' });
     }
 
-    const worker = await client.query('SELECT worker_id FROM workers WHERE worker_id = $1', [worker_id]);
+    const worker = await client.query('SELECT worker_id, user_id FROM workers WHERE worker_id = $1', [worker_id]);
     if (!worker.rows[0]) {
       await client.query('ROLLBACK');
       return res.status(404).json({ error: 'Worker not found' });
@@ -107,6 +108,7 @@ async function createBooking(req, res, next) {
       [bookingId]
     );
     await client.query(`UPDATE tasks SET status = 'assigned' WHERE task_id = $1`, [task_id]);
+    await createNotification(client, worker.rows[0].user_id, 'booking_request', 'You have a new booking request.');
 
     const view = await bookingViewById(bookingId, client);
     await client.query('COMMIT');
@@ -184,6 +186,7 @@ async function acceptBooking(req, res, next) {
       return res.status(400).json({ error: `Cannot accept a booking with status '${booking.status}'` });
     }
     await pool.query(`UPDATE bookings SET status = 'accepted' WHERE booking_id = $1`, [booking.booking_id]);
+    await createNotification(pool, booking.requester_user_id, 'booking_accepted', 'Your booking was accepted.');
     return res.json(await bookingViewById(booking.booking_id));
   } catch (err) {
     return next(err);
@@ -202,6 +205,7 @@ async function checkin(req, res, next) {
       return res.status(400).json({ error: 'Worker has already checked in' });
     }
     await pool.query('UPDATE check_in_record SET start_ts = now() WHERE booking_id = $1', [booking.booking_id]);
+    await createNotification(pool, booking.requester_user_id, 'checkin', 'The worker checked in. Confirm start to proceed.');
     return res.json(await bookingViewById(booking.booking_id));
   } catch (err) {
     return next(err);
@@ -228,6 +232,7 @@ async function confirmStart(req, res, next) {
     );
     await client.query(`UPDATE bookings SET status = 'in_progress' WHERE booking_id = $1`, [booking.booking_id]);
     await client.query(`UPDATE payment_status SET status = 'confirmed' WHERE booking_id = $1`, [booking.booking_id]);
+    await createNotification(client, booking.worker_user_id, 'start_confirmed', 'The requester confirmed start. You can begin work.');
     const view = await bookingViewById(booking.booking_id, client);
     await client.query('COMMIT');
     return res.json(view);
@@ -251,6 +256,7 @@ async function checkout(req, res, next) {
       return res.status(400).json({ error: 'Worker has already checked out' });
     }
     await pool.query('UPDATE check_in_record SET end_ts = now() WHERE booking_id = $1', [booking.booking_id]);
+    await createNotification(pool, booking.requester_user_id, 'checkout', 'The worker checked out. Confirm completion to release payment.');
     return res.json(await bookingViewById(booking.booking_id));
   } catch (err) {
     return next(err);
@@ -278,6 +284,7 @@ async function confirmCompletion(req, res, next) {
     await client.query(`UPDATE bookings SET status = 'completed' WHERE booking_id = $1`, [booking.booking_id]);
     await client.query(`UPDATE payment_status SET status = 'released' WHERE booking_id = $1`, [booking.booking_id]);
     await client.query(`UPDATE tasks SET status = 'completed' WHERE task_id = $1`, [booking.task_id]);
+    await createNotification(client, booking.worker_user_id, 'completed', 'The requester confirmed completion. Payment released.');
     const view = await bookingViewById(booking.booking_id, client);
     await client.query('COMMIT');
     return res.json(view);
@@ -316,12 +323,49 @@ async function getPaymentStatus(req, res, next) {
 }
 
 // =====================================================================
-// Rebook
+// Book-from-profile & rebook (no task form — task auto-created server-side)
 // =====================================================================
 
-// POST /api/bookings/rebook/:workerId  (role requester)
-//   → fresh open task + new pending booking with that worker. Returns BookingView.
-async function rebook(req, res, next) {
+// Shared: auto-create a minimal internal task for a worker (title derived from
+// the worker's first skill), then a pending booking with its payment + check-in
+// records, mark the task assigned, and notify the worker. Returns
+// { bookingId } or { error } (caller decides the HTTP status). Must run inside
+// a transaction (pass the client). This is the one place both book-from-profile
+// (first booking) and rebook (repeat booking) create bookings, so they stay
+// identical to the original rebook pattern.
+async function createWorkerBooking(client, { requesterUserId, workerId, titlePrefix }) {
+  const worker = await client.query('SELECT worker_id, user_id, skills FROM workers WHERE worker_id = $1', [workerId]);
+  if (!worker.rows[0]) {
+    return { error: 'Worker not found' };
+  }
+
+  // Title derives from the worker's first listed skill (comma-separated).
+  const firstSkill = (worker.rows[0].skills || '').split(',')[0].trim();
+  const title = `${titlePrefix}: ${firstSkill || 'task'}`;
+
+  const task = await client.query(
+    `INSERT INTO tasks (user_id, title, status) VALUES ($1, $2, 'open') RETURNING task_id`,
+    [requesterUserId, title]
+  );
+  const taskId = task.rows[0].task_id;
+
+  const booking = await client.query(
+    `INSERT INTO bookings (task_id, worker_id, user_id, status)
+     VALUES ($1, $2, $3, 'pending') RETURNING booking_id`,
+    [taskId, workerId, requesterUserId]
+  );
+  const bookingId = booking.rows[0].booking_id;
+
+  await client.query(`INSERT INTO payment_status (booking_id, status) VALUES ($1, 'pending')`, [bookingId]);
+  await client.query('INSERT INTO check_in_record (booking_id) VALUES ($1)', [bookingId]);
+  await client.query(`UPDATE tasks SET status = 'assigned' WHERE task_id = $1`, [taskId]);
+  await createNotification(client, worker.rows[0].user_id, 'booking_request', 'You have a new booking request.');
+
+  return { bookingId };
+}
+
+// Run createWorkerBooking in its own transaction and return the BookingView.
+async function bookWorker(req, res, next, titlePrefix) {
   const workerId = parseId(req.params.workerId);
   if (workerId === null) {
     return res.status(400).json({ error: 'worker id must be an integer' });
@@ -330,35 +374,16 @@ async function rebook(req, res, next) {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-
-    const worker = await client.query('SELECT worker_id, skills FROM workers WHERE worker_id = $1', [workerId]);
-    if (!worker.rows[0]) {
+    const result = await createWorkerBooking(client, {
+      requesterUserId: req.user.user_id,
+      workerId,
+      titlePrefix,
+    });
+    if (result.error) {
       await client.query('ROLLBACK');
-      return res.status(404).json({ error: 'Worker not found' });
+      return res.status(404).json({ error: result.error });
     }
-
-    // Title derives from the worker's first listed skill (comma-separated).
-    const firstSkill = (worker.rows[0].skills || '').split(',')[0].trim();
-    const title = `Rebooking: ${firstSkill || 'task'}`;
-
-    const task = await client.query(
-      `INSERT INTO tasks (user_id, title, status) VALUES ($1, $2, 'open') RETURNING task_id`,
-      [req.user.user_id, title]
-    );
-    const taskId = task.rows[0].task_id;
-
-    const booking = await client.query(
-      `INSERT INTO bookings (task_id, worker_id, user_id, status)
-       VALUES ($1, $2, $3, 'pending') RETURNING booking_id`,
-      [taskId, workerId, req.user.user_id]
-    );
-    const bookingId = booking.rows[0].booking_id;
-
-    await client.query(`INSERT INTO payment_status (booking_id, status) VALUES ($1, 'pending')`, [bookingId]);
-    await client.query('INSERT INTO check_in_record (booking_id) VALUES ($1)', [bookingId]);
-    await client.query(`UPDATE tasks SET status = 'assigned' WHERE task_id = $1`, [taskId]);
-
-    const view = await bookingViewById(bookingId, client);
+    const view = await bookingViewById(result.bookingId, client);
     await client.query('COMMIT');
     return res.status(201).json(view);
   } catch (err) {
@@ -367,6 +392,19 @@ async function rebook(req, res, next) {
   } finally {
     client.release();
   }
+}
+
+// POST /api/bookings/book/:workerId  (role requester)
+//   The requester's entry into the loop: book a worker straight from their
+//   profile. The task is created internally — requesters never post a task.
+function bookFromProfile(req, res, next) {
+  return bookWorker(req, res, next, 'Booking');
+}
+
+// POST /api/bookings/rebook/:workerId  (role requester)
+//   One-tap rebook — the same flow as a first booking, with a "Rebooking:" title.
+function rebook(req, res, next) {
+  return bookWorker(req, res, next, 'Rebooking');
 }
 
 module.exports = {
@@ -378,6 +416,7 @@ module.exports = {
   checkout,
   confirmCompletion,
   getPaymentStatus,
+  bookFromProfile,
   rebook,
   bookingViewById,
 };

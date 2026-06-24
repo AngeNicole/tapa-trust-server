@@ -9,6 +9,7 @@ const reviewsRoutes = require('./routes/reviews.routes');
 const savedWorkersRoutes = require('./routes/savedWorkers.routes');
 const categoriesRoutes = require('./routes/categories.routes');
 const adminRoutes = require('./routes/admin.routes');
+const notificationsRoutes = require('./routes/notifications.routes');
 const errorHandler = require('./middleware/error');
 
 const app = express();
@@ -33,6 +34,7 @@ app.use('/api/reviews', reviewsRoutes);
 app.use('/api/saved-workers', savedWorkersRoutes);
 app.use('/api/categories', categoriesRoutes);
 app.use('/api/admin', adminRoutes);
+app.use('/api/notifications', notificationsRoutes);
 
 // --- 404 for unknown API routes ---
 app.use((req, res) => {
