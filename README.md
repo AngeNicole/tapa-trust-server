@@ -120,6 +120,8 @@ return `403`, missing resources `404`, and bad/missing fields `400`.
 - `POST /auth/register` — name, email, password, role (`requester` or `worker`), optional phone/location; returns a JWT
 - `POST /auth/login` — email, password; returns a JWT and basic user info
 - `GET  /auth/me` — current user
+- `PUT  /auth/me` — update own account profile (`name`, `phone`, `location`; partial updates allowed; email/role not editable)
+- `PUT  /auth/password` — change password (`currentPassword`, `newPassword`); verifies the current password
 
 ### Categories
 
