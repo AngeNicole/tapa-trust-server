@@ -1,34 +1,34 @@
 const {
-  request, app, authHeader, registerRequester, registerWorker, makeBookingAt, closePool,
+  request, app, pool, authHeader, registerRequester, registerWorker, makeBookingAt, closePool,
 } = require('./helpers');
 
 afterAll(closePool);
 
-describe('booking trust loop — happy path', () => {
-  test('drives create → accept → checkin → confirm-start → checkout → confirm-completion', async () => {
+// Read a task's status directly from the DB. Tasks are internal now (no HTTP
+// route), but the loop still drives their status, so we verify it at the table.
+async function taskStatus(taskId) {
+  const r = await pool.query('SELECT status FROM tasks WHERE task_id = $1', [taskId]);
+  return r.rows[0] && r.rows[0].status;
+}
+
+describe('booking trust loop — happy path (via book-from-profile)', () => {
+  test('drives book → accept → checkin → confirm-start → checkout → confirm-completion', async () => {
     const requester = await registerRequester();
     const worker = await registerWorker();
     await request(app).put('/api/workers/me').set(authHeader(worker.token)).send({ skills: 'Plumbing' });
 
-    const task = await request(app).post('/api/tasks').set(authHeader(requester.token))
-      .send({ title: 'Fix sink', location: 'Kigali' });
-    expect(task.status).toBe(201);
-    expect(task.body.status).toBe('open');
-
-    // create booking
-    const created = await request(app).post('/api/bookings').set(authHeader(requester.token))
-      .send({ task_id: task.body.task_id, worker_id: worker.worker_id });
+    // create the booking via the real product path — no task form
+    const created = await request(app).post(`/api/bookings/book/${worker.worker_id}`).set(authHeader(requester.token));
     expect(created.status).toBe(201);
     const id = created.body.booking_id;
     expect(created.body).toMatchObject({
       status: 'pending', payment: 'pending', checkedIn: false, startConfirmed: false,
       checkedOut: false, endConfirmed: false, review: null,
-      taskTitle: 'Fix sink', workerName: worker.user.name, requesterName: requester.user.name,
+      taskTitle: 'Booking: Plumbing', workerName: worker.user.name, requesterName: requester.user.name,
     });
 
-    // task flips to assigned
-    const assigned = await request(app).get(`/api/tasks/${task.body.task_id}`).set(authHeader(requester.token));
-    expect(assigned.body.status).toBe('assigned');
+    // the internal task was auto-created and marked assigned
+    expect(await taskStatus(created.body.task_id)).toBe('assigned');
 
     // accept
     const accepted = await request(app).post(`/api/bookings/${id}/accept`).set(authHeader(worker.token));
@@ -51,9 +51,8 @@ describe('booking trust loop — happy path', () => {
     const completed = await request(app).post(`/api/bookings/${id}/confirm-completion`).set(authHeader(requester.token));
     expect(completed.body).toMatchObject({ status: 'completed', endConfirmed: true, payment: 'released' });
 
-    // task flips to completed
-    const doneTask = await request(app).get(`/api/tasks/${task.body.task_id}`).set(authHeader(requester.token));
-    expect(doneTask.body.status).toBe('completed');
+    // the internal task flips to completed
+    expect(await taskStatus(created.body.task_id)).toBe('completed');
   });
 });
 
@@ -99,12 +98,6 @@ describe('authorization (401/403/404)', () => {
     expect(res.status).toBe(403);
   });
 
-  test('worker cannot post a task (role 403)', async () => {
-    const worker = await registerWorker();
-    const res = await request(app).post('/api/tasks').set(authHeader(worker.token)).send({ title: 'x' });
-    expect(res.status).toBe(403);
-  });
-
   test('a different requester cannot confirm someone else\'s booking (ownership 403)', async () => {
     const { bookingId } = await makeBookingAt('checkedIn');
     const intruder = await registerRequester();
@@ -121,16 +114,6 @@ describe('authorization (401/403/404)', () => {
   test('no token returns 401', async () => {
     const res = await request(app).get('/api/bookings');
     expect(res.status).toBe(401);
-  });
-
-  test('cannot book a task you do not own (403)', async () => {
-    const owner = await registerRequester();
-    const worker = await registerWorker();
-    const task = await request(app).post('/api/tasks').set(authHeader(owner.token)).send({ title: 'mine' });
-    const intruder = await registerRequester();
-    const res = await request(app).post('/api/bookings').set(authHeader(intruder.token))
-      .send({ task_id: task.body.task_id, worker_id: worker.worker_id });
-    expect(res.status).toBe(403);
   });
 });
 

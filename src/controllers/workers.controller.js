@@ -11,18 +11,80 @@ function publicWorker(row) {
     bio: row.bio,
     rating: row.rating === null ? 0 : Number(row.rating),
     tier: row.tier,
+    is_available: row.is_available,
+    photo: row.photo,
   };
 }
 
-const WORKER_COLUMNS = 'worker_id, user_id, name, skills, bio, rating, tier';
+const WORKER_COLUMNS = 'worker_id, user_id, name, skills, bio, rating, tier, is_available, photo';
 
-// GET /api/workers
+// Derive a worker's simulated verification status from their verification_request
+// rows: approved -> 'verified', any pending -> 'pending', otherwise 'unverified'.
+async function getVerificationStatus(workerId, db = pool) {
+  const r = await db.query(
+    `SELECT CASE
+       WHEN bool_or(status = 'approved') THEN 'verified'
+       WHEN bool_or(status = 'pending')  THEN 'pending'
+       ELSE 'unverified' END AS verification
+     FROM verification_request WHERE worker_id = $1`,
+    [workerId]
+  );
+  return (r.rows[0] && r.rows[0].verification) || 'unverified';
+}
+
+// Shape a row from the browse query — what a requester needs to evaluate and
+// pick a worker, without pulling the full profile.
+function browseWorker(row) {
+  return {
+    worker_id: row.worker_id,
+    user_id: row.user_id,
+    name: row.name,
+    photo: row.photo,
+    skills: row.skills,
+    rating: row.rating === null ? 0 : Number(row.rating),
+    tier: row.tier,
+    is_available: row.is_available,
+    completedJobs: row.completed_jobs,
+    verification: row.verification,
+  };
+}
+
+// GET /api/workers   ?skill=<text>  ?all=true
+// The requester's browse entry point. Returns only available workers by default;
+// ?all=true returns everyone (admin/testing). ?skill filters on the skills text.
 async function listWorkers(req, res, next) {
+  const { skill, all } = req.query;
+  const where = [];
+  const params = [];
+
+  if (all !== 'true') {
+    where.push('w.is_available = true');
+  }
+  if (skill) {
+    params.push(`%${skill}%`);
+    where.push(`w.skills ILIKE $${params.length}`);
+  }
+  const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+
   try {
     const result = await pool.query(
-      `SELECT ${WORKER_COLUMNS} FROM workers ORDER BY worker_id`
+      `SELECT w.worker_id, w.user_id, w.name, w.skills, w.bio, w.rating, w.tier,
+              w.is_available, w.photo,
+              (SELECT COUNT(*)::int FROM bookings b
+                 WHERE b.worker_id = w.worker_id AND b.status = 'completed') AS completed_jobs,
+              COALESCE((
+                SELECT CASE
+                  WHEN bool_or(vr.status = 'approved') THEN 'verified'
+                  WHEN bool_or(vr.status = 'pending')  THEN 'pending'
+                  ELSE 'unverified' END
+                FROM verification_request vr WHERE vr.worker_id = w.worker_id
+              ), 'unverified') AS verification
+       FROM workers w
+       ${whereSql}
+       ORDER BY w.worker_id`,
+      params
     );
-    return res.json(result.rows.map(publicWorker));
+    return res.json(result.rows.map(browseWorker));
   } catch (err) {
     return next(err);
   }
@@ -84,6 +146,7 @@ async function getWorker(req, res, next) {
     const profile = publicWorker(result.rows[0]);
     profile.taskHistory = await getTaskHistory(id);
     profile.activeJobsCount = await getActiveJobsCount(id);
+    profile.verification = await getVerificationStatus(id);
     return res.json(profile);
   } catch (err) {
     return next(err);
@@ -134,23 +197,40 @@ async function findOrCreateMyWorker(userId, client = pool) {
 async function getMyWorker(req, res, next) {
   try {
     const row = await findOrCreateMyWorker(req.user.user_id);
-    return res.json(publicWorker(row));
+    const profile = publicWorker(row);
+    profile.verification = await getVerificationStatus(row.worker_id);
+    return res.json(profile);
   } catch (err) {
     return next(err);
   }
 }
 
-// PUT /api/workers/me  (role worker)  body { skills, bio }
+// PUT /api/workers/me  (role worker)  body { skills?, bio?, photo? }
+// Partial update: only the fields present in the body are changed.
 async function updateMyWorker(req, res, next) {
-  const { skills, bio } = req.body || {};
+  const body = req.body || {};
   try {
-    // Ensure the row exists, then update only the editable fields.
     await findOrCreateMyWorker(req.user.user_id);
+
+    const fields = [];
+    const values = [];
+    let i = 1;
+    for (const key of ['skills', 'bio', 'photo']) {
+      if (body[key] !== undefined) {
+        fields.push(`${key} = $${i}`);
+        values.push(body[key] ?? null);
+        i += 1;
+      }
+    }
+    if (fields.length === 0) {
+      const current = await pool.query(`SELECT ${WORKER_COLUMNS} FROM workers WHERE user_id = $1`, [req.user.user_id]);
+      return res.json(publicWorker(current.rows[0]));
+    }
+
+    values.push(req.user.user_id);
     const result = await pool.query(
-      `UPDATE workers SET skills = $1, bio = $2
-       WHERE user_id = $3
-       RETURNING ${WORKER_COLUMNS}`,
-      [skills ?? null, bio ?? null, req.user.user_id]
+      `UPDATE workers SET ${fields.join(', ')} WHERE user_id = $${i} RETURNING ${WORKER_COLUMNS}`,
+      values
     );
     return res.json(publicWorker(result.rows[0]));
   } catch (err) {
@@ -158,4 +238,56 @@ async function updateMyWorker(req, res, next) {
   }
 }
 
-module.exports = { listWorkers, getWorker, getWorkerHistory, getMyWorker, updateMyWorker };
+// PUT /api/workers/me/availability  (role worker)  body { is_available: boolean }
+async function updateAvailability(req, res, next) {
+  const { is_available } = req.body || {};
+  if (typeof is_available !== 'boolean') {
+    return res.status(400).json({ error: 'is_available (boolean) is required' });
+  }
+  try {
+    await findOrCreateMyWorker(req.user.user_id);
+    const result = await pool.query(
+      `UPDATE workers SET is_available = $1 WHERE user_id = $2 RETURNING ${WORKER_COLUMNS}`,
+      [is_available, req.user.user_id]
+    );
+    const profile = publicWorker(result.rows[0]);
+    profile.verification = await getVerificationStatus(profile.worker_id);
+    return res.json(profile);
+  } catch (err) {
+    return next(err);
+  }
+}
+
+// POST /api/workers/me/verification  (role worker)  body { reference?, document? }
+// SIMULATED digital-ID step (Tier 1). Stores only a clearly-labelled mock marker
+// in a pending verification_request — NO real NIDA/Smile ID, NO ID-number
+// validation, NO document storage. Admin approves it to mark the worker verified.
+async function submitVerification(req, res, next) {
+  const { reference, document } = req.body || {};
+  try {
+    const worker = await findOrCreateMyWorker(req.user.user_id);
+    const marker = document
+      ? 'SIMULATED — document uploaded (demo placeholder)'
+      : `SIMULATED — reference: ${reference || 'demo'}`;
+    const result = await pool.query(
+      `INSERT INTO verification_request (worker_id, evidence, status)
+       VALUES ($1, $2, 'pending')
+       RETURNING request_id, worker_id, evidence, status, created_at`,
+      [worker.worker_id, marker]
+    );
+    return res.status(201).json({ request: result.rows[0], verification: 'pending', simulated: true });
+  } catch (err) {
+    return next(err);
+  }
+}
+
+module.exports = {
+  listWorkers,
+  getWorker,
+  getWorkerHistory,
+  getMyWorker,
+  updateMyWorker,
+  updateAvailability,
+  submitVerification,
+  getVerificationStatus,
+};

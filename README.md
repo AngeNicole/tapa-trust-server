@@ -129,21 +129,24 @@ return `403`, missing resources `404`, and bad/missing fields `400`.
 
 ### Workers
 
-- `GET  /workers` — list all worker profiles
-- `GET  /workers/:id` — a worker profile, including `taskHistory` (completed jobs only) and `activeJobsCount`
+- `GET  /workers` — browse workers. Returns only `is_available = true` by default; `?skill=<text>` filters on skills; `?all=true` returns everyone (admin/testing). Each row carries name, photo, skills, rating, `completedJobs`, `is_available`, and `verification`.
+- `GET  /workers/:id` — a worker profile, including `taskHistory` (completed jobs only), `activeJobsCount`, and `verification`
 - `GET  /workers/:id/history` — a worker's completed-only track record as a standalone list
 - `GET  /workers/me` _(worker)_ — the caller's own profile (created lazily if missing)
-- `PUT  /workers/me` _(worker)_ — update `skills` and `bio`
+- `PUT  /workers/me` _(worker)_ — partial update of `skills`, `bio`, `photo`
+- `PUT  /workers/me/availability` _(worker)_ — set `is_available` (boolean)
+- `POST /workers/me/verification` _(worker)_ — submit a **simulated** digital ID (mock reference / document placeholder); creates a pending verification request
 
 ### Tasks
 
-- `POST /tasks` _(requester)_ — create an open task (`title`, optional `category_id`/`description`/`location`)
-- `GET  /tasks` _(requester)_ — the caller's own tasks
-- `GET  /tasks/:id` — a single task
+There is **no requester-facing task API**. In the browse-and-book model requesters
+never post tasks: a booking auto-creates its task server-side (see
+`POST /bookings/book/:workerId`). The `tasks` table is internal — read via the
+booking views and worker history, written only by booking creation/completion.
 
 ### Bookings — the trust loop
 
-- `POST /bookings` _(requester)_ — create a pending booking (`task_id`, `worker_id`); also creates its payment + check-in records and marks the task assigned
+- `POST /bookings/book/:workerId` _(requester)_ — **book from a worker profile** (the requester entry point): auto-creates the task server-side, then a pending booking + payment + check-in. Requesters never post a task.
 - `GET  /bookings` — bookings scoped to the caller (requester sees their own; worker sees theirs)
 - `POST /bookings/:id/accept` _(worker)_ — `pending` → `accepted`
 - `POST /bookings/:id/checkin` _(worker)_ — record start time
@@ -166,7 +169,17 @@ once the requester confirms each step.
 - `POST   /saved-workers` _(requester)_ — save a worker (`worker_id`); idempotent
 - `DELETE /saved-workers/:workerId` _(requester)_ — remove a saved worker
 
+### Notifications (in-app only — no web push)
+
+- `GET  /notifications` — the caller's notifications, newest first
+- `POST /notifications/:id/read` — mark one read (owner only)
+
+Lifecycle transitions insert an in-app notification for the other party (booking
+request → worker; check-in → requester; confirm-start → worker; check-out →
+requester; confirm-completion → worker).
+
 ### Admin (oversight only — no transactional actions)
 
 - `GET  /admin/users` _(admin)_ — list all users
 - `POST /admin/categories` _(admin)_ — create a skill category (`name`, optional `description`)
+- `POST /admin/workers/:workerId/verify` _(admin)_ — mark a worker verified (simulated workflow)

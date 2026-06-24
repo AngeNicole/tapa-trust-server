@@ -2,7 +2,6 @@ const express = require('express');
 const auth = require('../middleware/auth');
 const requireRole = require('../middleware/requireRole');
 const {
-  createBooking,
   listBookings,
   acceptBooking,
   checkin,
@@ -10,16 +9,19 @@ const {
   checkout,
   confirmCompletion,
   getPaymentStatus,
+  bookFromProfile,
   rebook,
 } = require('../controllers/bookings.controller');
 
 const router = express.Router();
 
-router.post('/', auth, requireRole('requester'), createBooking);
 router.get('/', auth, listBookings);
 
-// Rebook lives on a literal 'rebook' segment; declared before the '/:id/*'
-// actions to keep routing unambiguous.
+// Requester entry point: book straight from a worker profile (task auto-created
+// server-side — requesters never post a task). Plus one-tap rebook. Both live on
+// literal segments declared before the '/:id/*' actions to keep routing
+// unambiguous.
+router.post('/book/:workerId', auth, requireRole('requester'), bookFromProfile);
 router.post('/rebook/:workerId', auth, requireRole('requester'), rebook);
 
 // Worker-driven transitions.

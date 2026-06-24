@@ -53,34 +53,55 @@ async function createAdmin() {
   return signToken({ user_id: r.rows[0].user_id, role: 'admin' });
 }
 
-// Drive a brand-new booking to a given stage. Returns ids + the latest body.
-// stages: 'pending' | 'accepted' | 'checkedIn' | 'in_progress' | 'checkedOut' | 'completed'
+// Stage an existing booking directly in the DB to a given lifecycle state, by
+// writing the same columns the controllers would. Used only to set up
+// preconditions for tests — it deliberately does NOT go through the HTTP
+// transition routes (and never through the removed task-posting routes), so
+// test setup doesn't depend on the product API for staging. The transitions
+// themselves are exercised over HTTP in trustLoop.test.js.
+async function stageBooking(bookingId, taskId, stage) {
+  if (stage === 'pending') return;
+  if (stage === 'accepted') {
+    await pool.query(`UPDATE bookings SET status = 'accepted' WHERE booking_id = $1`, [bookingId]);
+  } else if (stage === 'checkedIn') {
+    await pool.query(`UPDATE bookings SET status = 'accepted' WHERE booking_id = $1`, [bookingId]);
+    await pool.query('UPDATE check_in_record SET start_ts = now() WHERE booking_id = $1', [bookingId]);
+  } else if (stage === 'in_progress') {
+    await pool.query(`UPDATE bookings SET status = 'in_progress' WHERE booking_id = $1`, [bookingId]);
+    await pool.query('UPDATE check_in_record SET start_ts = now(), start_confirmed = true WHERE booking_id = $1', [bookingId]);
+    await pool.query(`UPDATE payment_status SET status = 'confirmed' WHERE booking_id = $1`, [bookingId]);
+  } else if (stage === 'checkedOut') {
+    await pool.query(`UPDATE bookings SET status = 'in_progress' WHERE booking_id = $1`, [bookingId]);
+    await pool.query('UPDATE check_in_record SET start_ts = now(), start_confirmed = true, end_ts = now() WHERE booking_id = $1', [bookingId]);
+    await pool.query(`UPDATE payment_status SET status = 'confirmed' WHERE booking_id = $1`, [bookingId]);
+  } else if (stage === 'completed') {
+    await pool.query(`UPDATE bookings SET status = 'completed' WHERE booking_id = $1`, [bookingId]);
+    await pool.query('UPDATE check_in_record SET start_ts = now(), start_confirmed = true, end_ts = now(), end_confirmed = true WHERE booking_id = $1', [bookingId]);
+    await pool.query(`UPDATE payment_status SET status = 'released' WHERE booking_id = $1`, [bookingId]);
+    await pool.query(`UPDATE tasks SET status = 'completed' WHERE task_id = $1`, [taskId]);
+  }
+}
+
+// Create a booking via the real product path (book-from-profile) and stage it to
+// the requested lifecycle state. Returns ids + the current BookingView (read via
+// the real GET /bookings). stages: 'pending' | 'accepted' | 'checkedIn' |
+// 'in_progress' | 'checkedOut' | 'completed'.
 async function makeBookingAt(stage = 'pending', opts = {}) {
   const requester = opts.requester || (await registerRequester());
-  const worker = opts.worker || (await registerWorker({ }));
-  // give the worker a skill so rebook titles are meaningful
+  const worker = opts.worker || (await registerWorker({}));
+  // give the worker a skill so booking/rebook titles are meaningful
   await request(app).put('/api/workers/me').set(authHeader(worker.token)).send({ skills: 'Plumbing, Electrical', bio: 'test' });
 
-  const task = await request(app).post('/api/tasks').set(authHeader(requester.token)).send({ title: 'Test task' });
-  const taskId = task.body.task_id;
-  let res = await request(app).post('/api/bookings').set(authHeader(requester.token))
-    .send({ task_id: taskId, worker_id: worker.worker_id });
-  const bookingId = res.body.booking_id;
+  const created = await request(app).post(`/api/bookings/book/${worker.worker_id}`).set(authHeader(requester.token));
+  const bookingId = created.body.booking_id;
+  const taskId = created.body.task_id;
 
-  const steps = {
-    accepted: () => request(app).post(`/api/bookings/${bookingId}/accept`).set(authHeader(worker.token)),
-    checkedIn: () => request(app).post(`/api/bookings/${bookingId}/checkin`).set(authHeader(worker.token)),
-    in_progress: () => request(app).post(`/api/bookings/${bookingId}/confirm-start`).set(authHeader(requester.token)),
-    checkedOut: () => request(app).post(`/api/bookings/${bookingId}/checkout`).set(authHeader(worker.token)),
-    completed: () => request(app).post(`/api/bookings/${bookingId}/confirm-completion`).set(authHeader(requester.token)),
-  };
-  const order = ['accepted', 'checkedIn', 'in_progress', 'checkedOut', 'completed'];
-  const target = order.indexOf(stage);
-  for (let i = 0; i <= target; i += 1) {
-    res = await steps[order[i]]();
-  }
+  await stageBooking(bookingId, taskId, stage);
 
-  return { requester, worker, taskId, bookingId, body: res.body };
+  const list = await request(app).get('/api/bookings').set(authHeader(requester.token));
+  const body = list.body.find((b) => b.booking_id === bookingId);
+
+  return { requester, worker, taskId, bookingId, body };
 }
 
 const closePool = () => pool.end();

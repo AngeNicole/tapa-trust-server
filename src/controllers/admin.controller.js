@@ -36,4 +36,36 @@ async function createCategory(req, res, next) {
   }
 }
 
-module.exports = { listUsers, createCategory };
+// POST /api/admin/workers/:workerId/verify  (role admin)
+// Marks a worker verified in the SIMULATED verification workflow: approves their
+// pending verification_request(s), or records an admin-approved one if none
+// exist. Oversight only — no transactional/booking action.
+async function verifyWorker(req, res, next) {
+  const workerId = Number(req.params.workerId);
+  if (!Number.isInteger(workerId)) {
+    return res.status(400).json({ error: 'worker id must be an integer' });
+  }
+  try {
+    const worker = await pool.query('SELECT worker_id FROM workers WHERE worker_id = $1', [workerId]);
+    if (!worker.rows[0]) {
+      return res.status(404).json({ error: 'Worker not found' });
+    }
+    const updated = await pool.query(
+      `UPDATE verification_request SET status = 'approved'
+       WHERE worker_id = $1 AND status = 'pending'`,
+      [workerId]
+    );
+    if (updated.rowCount === 0) {
+      await pool.query(
+        `INSERT INTO verification_request (worker_id, evidence, status)
+         VALUES ($1, 'SIMULATED — admin-approved', 'approved')`,
+        [workerId]
+      );
+    }
+    return res.json({ worker_id: workerId, verification: 'verified' });
+  } catch (err) {
+    return next(err);
+  }
+}
+
+module.exports = { listUsers, createCategory, verifyWorker };

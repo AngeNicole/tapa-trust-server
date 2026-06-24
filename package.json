@@ -10,6 +10,7 @@
     "dev": "nodemon src/index.js",
     "migrate": "node db/migrate.js",
     "seed": "node db/seed.js",
+    "alter": "node db/alter.js",
     "test": "DATABASE_URL=postgres://localhost:5432/tapa_trust_test JWT_SECRET=test-secret jest --runInBand --forceExit"
   },
   "dependencies": {

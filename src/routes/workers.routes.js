@@ -7,13 +7,17 @@ const {
   getWorkerHistory,
   getMyWorker,
   updateMyWorker,
+  updateAvailability,
+  submitVerification,
 } = require('../controllers/workers.controller');
 
 const router = express.Router();
 
-// '/me' must be declared before '/:id' so it isn't captured as an id.
+// '/me' routes must be declared before '/:id' so they aren't captured as an id.
 router.get('/me', auth, requireRole('worker'), getMyWorker);
 router.put('/me', auth, requireRole('worker'), updateMyWorker);
+router.put('/me/availability', auth, requireRole('worker'), updateAvailability);
+router.post('/me/verification', auth, requireRole('worker'), submitVerification);
 
 router.get('/', auth, listWorkers);
 router.get('/:id', auth, getWorker);
