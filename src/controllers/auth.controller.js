@@ -115,4 +115,93 @@ async function me(req, res, next) {
   }
 }
 
-module.exports = { register, login, me };
+// PUT /api/auth/me  (protected)  body { name?, phone?, location? }
+// Updates the caller's own account profile. Only the fields present in the body
+// are changed; email and role are not editable here. Sending phone/location as
+// null or "" clears them. For worker accounts, a name change is mirrored to the
+// worker profile so requesters see a consistent name.
+async function updateMe(req, res, next) {
+  const body = req.body || {};
+  const fields = [];
+  const values = [];
+  let i = 1;
+
+  if (body.name !== undefined) {
+    if (!String(body.name).trim()) {
+      return res.status(400).json({ error: 'name cannot be empty' });
+    }
+    fields.push(`name = $${i}`);
+    values.push(String(body.name).trim());
+    i += 1;
+  }
+  if (body.phone !== undefined) {
+    fields.push(`phone = $${i}`);
+    values.push(body.phone || null);
+    i += 1;
+  }
+  if (body.location !== undefined) {
+    fields.push(`location = $${i}`);
+    values.push(body.location || null);
+    i += 1;
+  }
+  if (fields.length === 0) {
+    return res.status(400).json({ error: 'Provide at least one of: name, phone, location' });
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    values.push(req.user.user_id);
+    const result = await client.query(
+      `UPDATE users SET ${fields.join(', ')} WHERE user_id = $${i}
+       RETURNING user_id, name, email, phone, role, location`,
+      values
+    );
+    const row = result.rows[0];
+    if (!row) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'User not found' });
+    }
+    // Keep the worker profile's display name in sync with the account name.
+    if (row.role === 'worker' && body.name !== undefined) {
+      await client.query('UPDATE workers SET name = $1 WHERE user_id = $2', [row.name, row.user_id]);
+    }
+    await client.query('COMMIT');
+    return res.json({ user: publicUser(row) });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    return next(err);
+  } finally {
+    client.release();
+  }
+}
+
+// PUT /api/auth/password  (protected)  body { currentPassword, newPassword }
+// Changes the caller's password after verifying the current one.
+async function changePassword(req, res, next) {
+  const { currentPassword, newPassword } = req.body || {};
+  if (!currentPassword || !newPassword) {
+    return res.status(400).json({ error: 'currentPassword and newPassword are required' });
+  }
+  if (String(newPassword).length < 6) {
+    return res.status(400).json({ error: 'newPassword must be at least 6 characters' });
+  }
+
+  try {
+    const result = await pool.query('SELECT password_hash FROM users WHERE user_id = $1', [req.user.user_id]);
+    const row = result.rows[0];
+    if (!row) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    if (!(await bcrypt.compare(currentPassword, row.password_hash))) {
+      return res.status(400).json({ error: 'Current password is incorrect' });
+    }
+    const password_hash = await bcrypt.hash(newPassword, SALT_ROUNDS);
+    await pool.query('UPDATE users SET password_hash = $1 WHERE user_id = $2', [password_hash, req.user.user_id]);
+    return res.json({ message: 'Password updated' });
+  } catch (err) {
+    return next(err);
+  }
+}
+
+module.exports = { register, login, me, updateMe, changePassword };
