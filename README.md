@@ -137,6 +137,22 @@ return `403`, missing resources `404`, and bad/missing fields `400`.
 - `PUT  /workers/me/availability` _(worker)_ — set `is_available` (boolean)
 - `POST /workers/me/verification` _(worker)_ — submit a **simulated** digital ID (mock reference / document placeholder); creates a pending verification request
 
+A worker can only set `is_available = true` once `skills` and `bio` are both non-empty (completeness guard); going unavailable is always allowed.
+
+### Public workers (no auth)
+
+Unauthenticated browse for the marketing/landing surface. A dedicated narrow
+projection — never the authed worker object — so no account fields leak.
+
+- `GET /public/workers?skill=` — available workers only, optional skill filter
+- `GET /public/workers/:id` — one worker's public profile
+- `GET /public/workers/:id/history` — that worker's completed-job history
+
+Public worker fields: `worker_id`, `name`, `skills`, `bio`, `photo`, `rating`,
+`completedJobs`, `education`, `certifications`, `verification`. History items:
+`taskTitle`, `date`, `rating`, `comment`. Excludes email, phone, location,
+`user_id`, verification evidence, and all account fields.
+
 ### Tasks
 
 There is **no requester-facing task API**. In the browse-and-book model requesters

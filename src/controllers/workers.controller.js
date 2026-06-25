@@ -260,13 +260,23 @@ async function updateMyWorker(req, res, next) {
 }
 
 // PUT /api/workers/me/availability  (role worker)  body { is_available: boolean }
+// Completeness guard: a worker can only go available with non-empty skills AND
+// bio, so an incomplete profile can never appear in browse — even via direct API
+// calls. Going unavailable is always allowed.
 async function updateAvailability(req, res, next) {
   const { is_available } = req.body || {};
   if (typeof is_available !== 'boolean') {
     return res.status(400).json({ error: 'is_available (boolean) is required' });
   }
   try {
-    await findOrCreateMyWorker(req.user.user_id);
+    const me = await findOrCreateMyWorker(req.user.user_id);
+    if (is_available === true) {
+      const hasSkills = (me.skills || '').trim().length > 0;
+      const hasBio = (me.bio || '').trim().length > 0;
+      if (!hasSkills || !hasBio) {
+        return res.status(400).json({ error: 'Add your skills and bio before going available' });
+      }
+    }
     const result = await pool.query(
       `UPDATE workers SET is_available = $1 WHERE user_id = $2 RETURNING ${WORKER_COLUMNS}`,
       [is_available, req.user.user_id]

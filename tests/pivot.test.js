@@ -19,9 +19,11 @@ async function bookAcceptCheckin() {
 }
 
 // Make a worker available and give them a skill so browse/booking are meaningful.
+// A complete, available worker: skills + bio set (required by the completeness
+// guard), then toggled available.
 async function availableWorker(skills = 'Plumbing') {
   const worker = await registerWorker();
-  await request(app).put('/api/workers/me').set(authHeader(worker.token)).send({ skills });
+  await request(app).put('/api/workers/me').set(authHeader(worker.token)).send({ skills, bio: 'Experienced worker' });
   await request(app).put('/api/workers/me/availability').set(authHeader(worker.token)).send({ is_available: true });
   return worker;
 }
@@ -29,6 +31,7 @@ async function availableWorker(skills = 'Plumbing') {
 describe('worker availability', () => {
   test('PUT /workers/me/availability toggles is_available and returns the profile', async () => {
     const worker = await registerWorker();
+    await request(app).put('/api/workers/me').set(authHeader(worker.token)).send({ skills: 'Plumbing', bio: 'Experienced' });
     const me = await request(app).get('/api/workers/me').set(authHeader(worker.token));
     expect(me.body.is_available).toBe(false); // default
 
@@ -46,6 +49,28 @@ describe('worker availability', () => {
 
     const requester = await registerRequester();
     expect((await request(app).put('/api/workers/me/availability').set(authHeader(requester.token)).send({ is_available: true })).status).toBe(403);
+  });
+
+  test('completeness guard: cannot go available without both skills and bio', async () => {
+    const worker = await registerWorker(); // no skills/bio
+    expect((await request(app).put('/api/workers/me/availability').set(authHeader(worker.token)).send({ is_available: true })).status).toBe(400);
+
+    // skills only -> still blocked (bio required too)
+    await request(app).put('/api/workers/me').set(authHeader(worker.token)).send({ skills: 'Plumbing' });
+    expect((await request(app).put('/api/workers/me/availability').set(authHeader(worker.token)).send({ is_available: true })).status).toBe(400);
+
+    // both filled -> succeeds
+    await request(app).put('/api/workers/me').set(authHeader(worker.token)).send({ bio: 'Experienced' });
+    const ok = await request(app).put('/api/workers/me/availability').set(authHeader(worker.token)).send({ is_available: true });
+    expect(ok.status).toBe(200);
+    expect(ok.body.is_available).toBe(true);
+  });
+
+  test('going unavailable is always allowed, even with an empty profile', async () => {
+    const worker = await registerWorker(); // no skills/bio
+    const off = await request(app).put('/api/workers/me/availability').set(authHeader(worker.token)).send({ is_available: false });
+    expect(off.status).toBe(200);
+    expect(off.body.is_available).toBe(false);
   });
 });
 
