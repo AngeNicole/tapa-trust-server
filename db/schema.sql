@@ -50,6 +50,8 @@ CREATE TABLE workers (
   tier         VARCHAR(30)  NOT NULL DEFAULT 'Unverified',
   is_available BOOLEAN      NOT NULL DEFAULT false,   -- shown in browse only when true
   photo        TEXT,                                  -- optional profile photo URL/ref
+  education      TEXT,                                -- optional, free text
+  certifications TEXT,                                -- optional, free text
   created_at   TIMESTAMPTZ  NOT NULL DEFAULT now()
 );
 
@@ -158,6 +160,7 @@ CREATE TABLE verification_request (
   admin_id   INTEGER REFERENCES admins(admin_id) ON DELETE SET NULL,
   evidence   TEXT,
   status     VARCHAR(20) NOT NULL DEFAULT 'pending',  -- pending | approved | rejected
+  note       TEXT,                                    -- optional admin note (e.g. on reject)
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 

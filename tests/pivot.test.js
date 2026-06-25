@@ -207,4 +207,42 @@ describe('simulated digital-ID verification', () => {
     const worker = await registerWorker();
     expect((await request(app).post(`/api/admin/workers/${worker.worker_id}/verify`).set(authHeader(worker.token))).status).toBe(403);
   });
+
+  test('full status path: pending → reject → unverified → resubmit → pending → approve → verified', async () => {
+    const worker = await registerWorker();
+    const requester = await registerRequester();
+    const adminToken = await createAdmin();
+    const profileVerification = async () =>
+      (await request(app).get(`/api/workers/${worker.worker_id}`).set(authHeader(requester.token))).body.verification;
+
+    // submit -> pending
+    await request(app).post('/api/workers/me/verification').set(authHeader(worker.token)).send({ reference: 'demo-1' });
+    expect(await profileVerification()).toBe('pending');
+
+    // reject -> unverified (with note)
+    const rej = await request(app).post(`/api/admin/workers/${worker.worker_id}/reject`).set(authHeader(adminToken)).send({ note: 'blurry photo' });
+    expect(rej.status).toBe(200);
+    expect(rej.body.verification).toBe('unverified');
+    expect(rej.body.note).toBe('blurry photo');
+    expect(await profileVerification()).toBe('unverified');
+
+    // resubmit -> fresh pending (must not error on the existing rejected row)
+    const resub = await request(app).post('/api/workers/me/verification').set(authHeader(worker.token)).send({ reference: 'demo-2' });
+    expect(resub.status).toBe(201);
+    expect(resub.body.verification).toBe('pending');
+    expect(await profileVerification()).toBe('pending');
+
+    // approve still works after the resubmit
+    const appr = await request(app).post(`/api/admin/workers/${worker.worker_id}/verify`).set(authHeader(adminToken));
+    expect(appr.status).toBe(200);
+    expect(await profileVerification()).toBe('verified');
+  });
+
+  test('reject is admin-only; 404 for a missing worker', async () => {
+    const worker = await registerWorker();
+    expect((await request(app).post(`/api/admin/workers/${worker.worker_id}/reject`).set(authHeader(worker.token))).status).toBe(403);
+
+    const adminToken = await createAdmin();
+    expect((await request(app).post('/api/admin/workers/99999999/reject').set(authHeader(adminToken))).status).toBe(404);
+  });
 });

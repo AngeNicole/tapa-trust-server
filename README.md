@@ -133,7 +133,7 @@ return `403`, missing resources `404`, and bad/missing fields `400`.
 - `GET  /workers/:id` — a worker profile, including `taskHistory` (completed jobs only), `activeJobsCount`, and `verification`
 - `GET  /workers/:id/history` — a worker's completed-only track record as a standalone list
 - `GET  /workers/me` _(worker)_ — the caller's own profile (created lazily if missing)
-- `PUT  /workers/me` _(worker)_ — partial update of `skills`, `bio`, `photo`
+- `PUT  /workers/me` _(worker)_ — partial update of `skills`, `bio`, `photo`, and the optional free-text `education` / `certifications` (trimmed, empty→null, capped 1000 chars)
 - `PUT  /workers/me/availability` _(worker)_ — set `is_available` (boolean)
 - `POST /workers/me/verification` _(worker)_ — submit a **simulated** digital ID (mock reference / document placeholder); creates a pending verification request
 
@@ -183,3 +183,4 @@ requester; confirm-completion → worker).
 - `GET  /admin/users` _(admin)_ — list all users
 - `POST /admin/categories` _(admin)_ — create a skill category (`name`, optional `description`)
 - `POST /admin/workers/:workerId/verify` _(admin)_ — mark a worker verified (simulated workflow)
+- `POST /admin/workers/:workerId/reject` _(admin)_ — reject verification (optional `note`); status returns to unverified, worker may resubmit

@@ -45,6 +45,38 @@ describe('workers', () => {
     expect(res.status).toBe(403);
   });
 
+  test('PUT /workers/me persists optional education and certifications; returned by /me and /:id', async () => {
+    const worker = await registerWorker();
+    const res = await request(app).put('/api/workers/me').set(authHeader(worker.token))
+      .send({ education: 'BSc Civil Engineering', certifications: 'Certified plumber (2021)' });
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ education: 'BSc Civil Engineering', certifications: 'Certified plumber (2021)' });
+
+    const me = await request(app).get('/api/workers/me').set(authHeader(worker.token));
+    expect(me.body.education).toBe('BSc Civil Engineering');
+
+    const { token } = await registerRequester();
+    const detail = await request(app).get(`/api/workers/${worker.worker_id}`).set(authHeader(token));
+    expect(detail.body.certifications).toBe('Certified plumber (2021)');
+  });
+
+  test('optional fields accept empty/null (empty -> null, never an error) and trim', async () => {
+    const worker = await registerWorker();
+    await request(app).put('/api/workers/me').set(authHeader(worker.token)).send({ education: 'temp' });
+    const cleared = await request(app).put('/api/workers/me').set(authHeader(worker.token))
+      .send({ education: '   ', certifications: null });
+    expect(cleared.status).toBe(200);
+    expect(cleared.body.education).toBeNull();
+    expect(cleared.body.certifications).toBeNull();
+  });
+
+  test('over-long optional field is rejected (400)', async () => {
+    const worker = await registerWorker();
+    const res = await request(app).put('/api/workers/me').set(authHeader(worker.token))
+      .send({ education: 'a'.repeat(1001) });
+    expect(res.status).toBe(400);
+  });
+
   test('GET /workers/:id includes empty taskHistory and zero activeJobsCount for a fresh worker', async () => {
     const worker = await registerWorker();
     const { token } = await registerRequester();
