@@ -68,4 +68,40 @@ async function verifyWorker(req, res, next) {
   }
 }
 
-module.exports = { listUsers, createCategory, verifyWorker };
+// POST /api/admin/workers/:workerId/reject  (role admin)  body { note? }
+// Simulated verification workflow: rejects the worker's current verification
+// request(s) so their derived status returns to 'unverified'. Stores the optional
+// admin note. Runs in one transaction. A worker can resubmit afterwards.
+async function rejectWorker(req, res, next) {
+  const workerId = Number(req.params.workerId);
+  if (!Number.isInteger(workerId)) {
+    return res.status(400).json({ error: 'worker id must be an integer' });
+  }
+  const { note } = req.body || {};
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const worker = await client.query('SELECT worker_id FROM workers WHERE worker_id = $1', [workerId]);
+    if (!worker.rows[0]) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Worker not found' });
+    }
+    // Reject any non-rejected request(s) so the derived status returns to unverified.
+    await client.query(
+      `UPDATE verification_request SET status = 'rejected', note = $2
+       WHERE worker_id = $1 AND status IN ('pending', 'approved')`,
+      [workerId, note ?? null]
+    );
+    await client.query('COMMIT');
+    return res.json({ worker_id: workerId, verification: 'unverified', note: note ?? null });
+  } catch (err) {
+    // Guard the rollback so a failed rollback can't mask the original error.
+    try { await client.query('ROLLBACK'); } catch (_) { /* no active transaction */ }
+    return next(err);
+  } finally {
+    client.release();
+  }
+}
+
+module.exports = { listUsers, createCategory, verifyWorker, rejectWorker };

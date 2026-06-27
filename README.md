@@ -133,9 +133,25 @@ return `403`, missing resources `404`, and bad/missing fields `400`.
 - `GET  /workers/:id` — a worker profile, including `taskHistory` (completed jobs only), `activeJobsCount`, and `verification`
 - `GET  /workers/:id/history` — a worker's completed-only track record as a standalone list
 - `GET  /workers/me` _(worker)_ — the caller's own profile (created lazily if missing)
-- `PUT  /workers/me` _(worker)_ — partial update of `skills`, `bio`, `photo`
+- `PUT  /workers/me` _(worker)_ — partial update of `skills`, `bio`, `photo`, and the optional free-text `education` / `certifications` (trimmed, empty→null, capped 1000 chars)
 - `PUT  /workers/me/availability` _(worker)_ — set `is_available` (boolean)
 - `POST /workers/me/verification` _(worker)_ — submit a **simulated** digital ID (mock reference / document placeholder); creates a pending verification request
+
+A worker can only set `is_available = true` once `skills` and `bio` are both non-empty (completeness guard); going unavailable is always allowed.
+
+### Public workers (no auth)
+
+Unauthenticated browse for the marketing/landing surface. A dedicated narrow
+projection — never the authed worker object — so no account fields leak.
+
+- `GET /public/workers?skill=` — available workers only, optional skill filter
+- `GET /public/workers/:id` — one worker's public profile
+- `GET /public/workers/:id/history` — that worker's completed-job history
+
+Public worker fields: `worker_id`, `name`, `skills`, `bio`, `photo`, `rating`,
+`completedJobs`, `education`, `certifications`, `verification`. History items:
+`taskTitle`, `date`, `rating`, `comment`. Excludes email, phone, location,
+`user_id`, verification evidence, and all account fields.
 
 ### Tasks
 
@@ -183,3 +199,4 @@ requester; confirm-completion → worker).
 - `GET  /admin/users` _(admin)_ — list all users
 - `POST /admin/categories` _(admin)_ — create a skill category (`name`, optional `description`)
 - `POST /admin/workers/:workerId/verify` _(admin)_ — mark a worker verified (simulated workflow)
+- `POST /admin/workers/:workerId/reject` _(admin)_ — reject verification (optional `note`); status returns to unverified, worker may resubmit

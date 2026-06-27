@@ -13,10 +13,13 @@ function publicWorker(row) {
     tier: row.tier,
     is_available: row.is_available,
     photo: row.photo,
+    education: row.education,
+    certifications: row.certifications,
   };
 }
 
-const WORKER_COLUMNS = 'worker_id, user_id, name, skills, bio, rating, tier, is_available, photo';
+const WORKER_COLUMNS = 'worker_id, user_id, name, skills, bio, rating, tier, is_available, photo, education, certifications';
+const FREE_TEXT_CAP = 1000;
 
 // Derive a worker's simulated verification status from their verification_request
 // rows: approved -> 'verified', any pending -> 'pending', otherwise 'unverified'.
@@ -205,10 +208,19 @@ async function getMyWorker(req, res, next) {
   }
 }
 
-// PUT /api/workers/me  (role worker)  body { skills?, bio?, photo? }
-// Partial update: only the fields present in the body are changed.
+// PUT /api/workers/me  (role worker)  body { skills?, bio?, photo?, education?, certifications? }
+// Partial update: only the fields present in the body are changed. education and
+// certifications are optional free text — trimmed, empty treated as null, capped
+// at FREE_TEXT_CAP chars (over-cap is a 400; empty is never an error).
 async function updateMyWorker(req, res, next) {
   const body = req.body || {};
+
+  for (const key of ['education', 'certifications']) {
+    if (body[key] !== undefined && body[key] !== null && String(body[key]).trim().length > FREE_TEXT_CAP) {
+      return res.status(400).json({ error: `${key} must be at most ${FREE_TEXT_CAP} characters` });
+    }
+  }
+
   try {
     await findOrCreateMyWorker(req.user.user_id);
 
@@ -219,6 +231,15 @@ async function updateMyWorker(req, res, next) {
       if (body[key] !== undefined) {
         fields.push(`${key} = $${i}`);
         values.push(body[key] ?? null);
+        i += 1;
+      }
+    }
+    // New optional fields: trim and treat empty string as null.
+    for (const key of ['education', 'certifications']) {
+      if (body[key] !== undefined) {
+        const trimmed = body[key] === null ? null : String(body[key]).trim();
+        fields.push(`${key} = $${i}`);
+        values.push(trimmed === '' ? null : trimmed);
         i += 1;
       }
     }
@@ -239,13 +260,23 @@ async function updateMyWorker(req, res, next) {
 }
 
 // PUT /api/workers/me/availability  (role worker)  body { is_available: boolean }
+// Completeness guard: a worker can only go available with non-empty skills AND
+// bio, so an incomplete profile can never appear in browse — even via direct API
+// calls. Going unavailable is always allowed.
 async function updateAvailability(req, res, next) {
   const { is_available } = req.body || {};
   if (typeof is_available !== 'boolean') {
     return res.status(400).json({ error: 'is_available (boolean) is required' });
   }
   try {
-    await findOrCreateMyWorker(req.user.user_id);
+    const me = await findOrCreateMyWorker(req.user.user_id);
+    if (is_available === true) {
+      const hasSkills = (me.skills || '').trim().length > 0;
+      const hasBio = (me.bio || '').trim().length > 0;
+      if (!hasSkills || !hasBio) {
+        return res.status(400).json({ error: 'Add your skills and bio before going available' });
+      }
+    }
     const result = await pool.query(
       `UPDATE workers SET is_available = $1 WHERE user_id = $2 RETURNING ${WORKER_COLUMNS}`,
       [is_available, req.user.user_id]

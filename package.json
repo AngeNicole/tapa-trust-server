@@ -11,6 +11,7 @@
     "migrate": "node db/migrate.js",
     "seed": "node db/seed.js",
     "alter": "node db/alter.js",
+    "alter:profile": "node db/alter.js alter-add-profile-fields.sql",
     "test": "DATABASE_URL=postgres://localhost:5432/tapa_trust_test JWT_SECRET=test-secret jest --runInBand --forceExit"
   },
   "dependencies": {
