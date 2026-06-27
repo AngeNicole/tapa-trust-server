@@ -77,3 +77,14 @@ describe('public worker browse (no auth)', () => {
     expect((await request(app).get('/api/public/workers/abc')).status).toBe(400);
   });
 });
+
+// The private path: the in-app /api/workers reads require a token. This is the
+// other half of the leak-closed proof — the only unauthenticated worker data
+// anywhere comes from /api/public/* (narrow serializer, asserted above).
+describe('authed worker routes reject anonymous access', () => {
+  test('GET /api/workers, /:id, /:id/history all 401 without a token', async () => {
+    expect((await request(app).get('/api/workers')).status).toBe(401);
+    expect((await request(app).get('/api/workers/1')).status).toBe(401);
+    expect((await request(app).get('/api/workers/1/history')).status).toBe(401);
+  });
+});
