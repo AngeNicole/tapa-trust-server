@@ -1,5 +1,5 @@
 const {
-  request, app, authHeader, registerRequester, registerWorker, makeBookingAt, closePool,
+  request, app, pool, authHeader, registerRequester, registerWorker, makeBookingAt, closePool,
 } = require('./helpers');
 
 afterAll(closePool);
@@ -50,6 +50,15 @@ describe('public worker browse (no auth)', () => {
     const ids = res.body.map((w) => w.worker_id);
     expect(ids).toContain(avail.worker_id);
     expect(ids).not.toContain(hidden.worker_id);
+  });
+
+  test('legacy available-but-incomplete workers do NOT surface in public browse', async () => {
+    const worker = await registerWorker(); // no skills/bio
+    // Simulate legacy data: force availability directly in the DB, bypassing the
+    // completeness guard that would normally block this.
+    await pool.query('UPDATE workers SET is_available = true WHERE worker_id = $1', [worker.worker_id]);
+    const res = await request(app).get('/api/public/workers');
+    expect(res.body.map((w) => w.worker_id)).not.toContain(worker.worker_id);
   });
 
   test('?skill= filters the public list', async () => {

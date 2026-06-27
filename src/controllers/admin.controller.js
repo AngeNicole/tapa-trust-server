@@ -81,11 +81,12 @@ async function rejectWorker(req, res, next) {
 
   const client = await pool.connect();
   try {
+    await client.query('BEGIN');
     const worker = await client.query('SELECT worker_id FROM workers WHERE worker_id = $1', [workerId]);
     if (!worker.rows[0]) {
+      await client.query('ROLLBACK');
       return res.status(404).json({ error: 'Worker not found' });
     }
-    await client.query('BEGIN');
     // Reject any non-rejected request(s) so the derived status returns to unverified.
     await client.query(
       `UPDATE verification_request SET status = 'rejected', note = $2
@@ -95,7 +96,8 @@ async function rejectWorker(req, res, next) {
     await client.query('COMMIT');
     return res.json({ worker_id: workerId, verification: 'unverified', note: note ?? null });
   } catch (err) {
-    await client.query('ROLLBACK');
+    // Guard the rollback so a failed rollback can't mask the original error.
+    try { await client.query('ROLLBACK'); } catch (_) { /* no active transaction */ }
     return next(err);
   } finally {
     client.release();

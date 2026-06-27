@@ -18,11 +18,10 @@ async function run() {
     process.exit(1);
   }
 
-  const sqlPath = path.join(__dirname, sqlFile);
-  const sql = fs.readFileSync(sqlPath, 'utf8');
-
   console.log(`Applying ${sqlFile} (non-destructive)...`);
   try {
+    const sqlPath = path.join(__dirname, sqlFile);
+    const sql = fs.readFileSync(sqlPath, 'utf8');
     await pool.query(sql);
     const { rows } = await pool.query(
       `SELECT table_name, column_name FROM information_schema.columns

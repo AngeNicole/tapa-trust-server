@@ -40,7 +40,15 @@ const PUBLIC_WORKER_SELECT = `
 // GET /api/public/workers?skill=   (no auth) — available workers only.
 async function listPublicWorkers(req, res, next) {
   const { skill } = req.query;
-  const where = ['w.is_available = true'];
+  // Available AND complete: the availability guard only stops *new* incomplete
+  // workers from going available, so we also enforce non-empty skills/bio here
+  // at query time — legacy rows that were marked available before the guard
+  // existed must never surface on the public browse.
+  const where = [
+    'w.is_available = true',
+    "btrim(coalesce(w.skills, '')) <> ''",
+    "btrim(coalesce(w.bio, '')) <> ''",
+  ];
   const params = [];
   if (skill) {
     params.push(`%${skill}%`);
