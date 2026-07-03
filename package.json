@@ -10,6 +10,7 @@
     "dev": "nodemon src/index.js",
     "migrate": "node db/migrate.js",
     "seed": "node db/seed.js",
+    "seed:admin": "node db/seed-admin.js",
     "alter": "node db/alter.js",
     "alter:profile": "node db/alter.js alter-add-profile-fields.sql",
     "alter:chat": "node db/alter.js alter-add-booking-chat.sql",
