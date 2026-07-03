@@ -27,10 +27,15 @@ async function run() {
       `SELECT table_name, column_name FROM information_schema.columns
        WHERE (table_name = 'workers' AND column_name IN ('is_available', 'photo', 'education', 'certifications'))
           OR (table_name = 'verification_request' AND column_name = 'note')
+          OR (table_name = 'bookings' AND column_name IN ('proposed_amount', 'proposed_by_user_id', 'price_agreed'))
        ORDER BY table_name, column_name`
     );
     console.log('Done — relevant columns now present:');
     for (const r of rows) console.log(`  ${r.table_name}.${r.column_name}`);
+    const tbl = await pool.query(
+      `SELECT to_regclass('public.messages') IS NOT NULL AS has_messages`
+    );
+    console.log(`  messages table present: ${tbl.rows[0].has_messages}`);
   } catch (err) {
     console.error('Alter failed:', err.message);
     process.exitCode = 1;

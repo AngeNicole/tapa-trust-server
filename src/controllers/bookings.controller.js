@@ -20,6 +20,10 @@ const BOOKING_VIEW_SQL = `
     (cir.end_ts IS NOT NULL)             AS "checkedOut",
     COALESCE(cir.end_confirmed, false)   AS "endConfirmed",
     ps.status AS payment,
+    ps.amount AS "paymentAmount",
+    b.proposed_amount     AS "proposedAmount",
+    b.proposed_by_user_id AS "proposedBy",
+    b.price_agreed        AS "priceAgreed",
     CASE WHEN rv.review_id IS NOT NULL
          THEN json_build_object('rating', rv.rating, 'comment', rv.comment)
          ELSE NULL END AS review
@@ -41,6 +45,7 @@ async function bookingViewById(bookingId, db = pool) {
 async function loadBooking(bookingId, db = pool) {
   const r = await db.query(
     `SELECT b.booking_id, b.task_id, b.worker_id, b.user_id AS requester_user_id, b.status,
+            b.proposed_amount, b.proposed_by_user_id, b.price_agreed,
             w.user_id AS worker_user_id,
             cir.start_ts, cir.end_ts, cir.start_confirmed, cir.end_confirmed,
             ps.status AS payment_status, ps.amount
@@ -138,6 +143,9 @@ async function checkin(req, res, next) {
     if (!booking) return undefined;
     if (booking.status !== 'accepted') {
       return res.status(400).json({ error: 'Worker must accept the booking before checking in' });
+    }
+    if (!booking.price_agreed) {
+      return res.status(400).json({ error: 'Agree on the price before checking in.' });
     }
     if (booking.start_ts) {
       return res.status(400).json({ error: 'Worker has already checked in' });
@@ -345,6 +353,131 @@ function rebook(req, res, next) {
   return bookWorker(req, res, next, 'Rebooking');
 }
 
+// =====================================================================
+// Booking chat + structured price agreement
+// =====================================================================
+
+// Either party (requester or the booked worker) to a booking.
+function isParty(booking, user) {
+  return booking.requester_user_id === user.user_id || booking.worker_user_id === user.user_id;
+}
+
+// Load a booking and enforce that the caller is a party. Returns the booking, or
+// null after sending 400/404/403. Shared by the chat + price endpoints (both
+// parties, either role — so this is used instead of the role-based guard()).
+async function partyGuard(req, res) {
+  const id = parseId(req.params.id);
+  if (id === null) {
+    res.status(400).json({ error: 'booking id must be an integer' });
+    return null;
+  }
+  const booking = await loadBooking(id);
+  if (!booking) {
+    res.status(404).json({ error: 'Booking not found' });
+    return null;
+  }
+  if (!isParty(booking, req.user)) {
+    res.status(403).json({ error: 'This booking does not belong to you' });
+    return null;
+  }
+  return booking;
+}
+
+// GET /api/bookings/:id/messages — chat for a booking, oldest first (parties only).
+async function getMessages(req, res, next) {
+  try {
+    const booking = await partyGuard(req, res);
+    if (!booking) return undefined;
+    const result = await pool.query(
+      `SELECT m.message_id, m.booking_id, m.sender_user_id, u.name AS sender_name, m.body, m.created_at
+       FROM messages m
+       JOIN users u ON u.user_id = m.sender_user_id
+       WHERE m.booking_id = $1
+       ORDER BY m.created_at ASC, m.message_id ASC`,
+      [booking.booking_id]
+    );
+    return res.json(result.rows);
+  } catch (err) {
+    return next(err);
+  }
+}
+
+// POST /api/bookings/:id/messages  body { body } — send a message (parties only).
+async function postMessage(req, res, next) {
+  try {
+    const booking = await partyGuard(req, res);
+    if (!booking) return undefined;
+    const { body } = req.body || {};
+    if (!body || !String(body).trim()) {
+      return res.status(400).json({ error: 'body is required' });
+    }
+    const result = await pool.query(
+      `INSERT INTO messages (booking_id, sender_user_id, body)
+       VALUES ($1, $2, $3)
+       RETURNING message_id, booking_id, sender_user_id, body, created_at`,
+      [booking.booking_id, req.user.user_id, String(body).trim()]
+    );
+    return res.status(201).json(result.rows[0]);
+  } catch (err) {
+    return next(err);
+  }
+}
+
+// POST /api/bookings/:id/propose-price  body { amount } — either party proposes.
+// A new proposal supersedes any unaccepted one (resets price_agreed to false).
+async function proposePrice(req, res, next) {
+  try {
+    const booking = await partyGuard(req, res);
+    if (!booking) return undefined;
+    const amount = Number((req.body || {}).amount);
+    if (!Number.isFinite(amount) || amount <= 0) {
+      return res.status(400).json({ error: 'amount must be a positive number' });
+    }
+    await pool.query(
+      `UPDATE bookings SET proposed_amount = $1, proposed_by_user_id = $2, price_agreed = false
+       WHERE booking_id = $3`,
+      [amount, req.user.user_id, booking.booking_id]
+    );
+    const other = req.user.user_id === booking.requester_user_id
+      ? booking.worker_user_id
+      : booking.requester_user_id;
+    await createNotification(pool, other, 'price_proposed', `A price of ${amount} was proposed. Review and accept.`);
+    return res.json(await bookingViewById(booking.booking_id));
+  } catch (err) {
+    return next(err);
+  }
+}
+
+// POST /api/bookings/:id/accept-price — the OTHER party accepts the current
+// proposal: sets price_agreed = true AND writes the amount to
+// payment_status.amount, in one transaction. Proposer cannot self-accept.
+async function acceptPrice(req, res, next) {
+  const booking = await partyGuard(req, res);
+  if (!booking) return undefined;
+  if (booking.proposed_amount === null || booking.proposed_amount === undefined) {
+    return res.status(400).json({ error: 'No price has been proposed yet' });
+  }
+  if (booking.proposed_by_user_id === req.user.user_id) {
+    return res.status(400).json({ error: 'You cannot accept your own proposal' });
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query('UPDATE bookings SET price_agreed = true WHERE booking_id = $1', [booking.booking_id]);
+    await client.query('UPDATE payment_status SET amount = $1 WHERE booking_id = $2', [booking.proposed_amount, booking.booking_id]);
+    const view = await bookingViewById(booking.booking_id, client);
+    await client.query('COMMIT');
+    await createNotification(pool, booking.proposed_by_user_id, 'price_accepted', `Your proposed price of ${booking.proposed_amount} was accepted.`);
+    return res.json(view);
+  } catch (err) {
+    try { await client.query('ROLLBACK'); } catch (_) { /* no active transaction */ }
+    return next(err);
+  } finally {
+    client.release();
+  }
+}
+
 module.exports = {
   listBookings,
   acceptBooking,
@@ -355,5 +488,9 @@ module.exports = {
   getPaymentStatus,
   bookFromProfile,
   rebook,
+  getMessages,
+  postMessage,
+  proposePrice,
+  acceptPrice,
   bookingViewById,
 };

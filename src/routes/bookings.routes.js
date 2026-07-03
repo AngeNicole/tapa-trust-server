@@ -11,6 +11,10 @@ const {
   getPaymentStatus,
   bookFromProfile,
   rebook,
+  getMessages,
+  postMessage,
+  proposePrice,
+  acceptPrice,
 } = require('../controllers/bookings.controller');
 
 const router = express.Router();
@@ -34,5 +38,12 @@ router.post('/:id/confirm-start', auth, requireRole('requester'), confirmStart);
 router.post('/:id/confirm-completion', auth, requireRole('requester'), confirmCompletion);
 
 router.get('/:id/payment-status', auth, getPaymentStatus);
+
+// Chat + structured price agreement — open to either party (any role); the
+// controller enforces the party (ownership) check.
+router.get('/:id/messages', auth, getMessages);
+router.post('/:id/messages', auth, postMessage);
+router.post('/:id/propose-price', auth, proposePrice);
+router.post('/:id/accept-price', auth, acceptPrice);
 
 module.exports = router;
