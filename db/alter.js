@@ -27,7 +27,9 @@ async function run() {
       `SELECT table_name, column_name FROM information_schema.columns
        WHERE (table_name = 'workers' AND column_name IN ('is_available', 'photo', 'education', 'certifications'))
           OR (table_name = 'verification_request' AND column_name = 'note')
-          OR (table_name = 'bookings' AND column_name IN ('proposed_amount', 'proposed_by_user_id', 'price_agreed'))
+          OR (table_name = 'bookings' AND column_name = 'agreed_price')
+          OR (table_name = 'messages' AND column_name = 'amount')
+          OR (table_name = 'notifications' AND column_name = 'booking_id')
        ORDER BY table_name, column_name`
     );
     console.log('Done — relevant columns now present:');

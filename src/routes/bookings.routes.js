@@ -8,13 +8,13 @@ const {
   confirmStart,
   checkout,
   confirmCompletion,
+  getBooking,
   getPaymentStatus,
   bookFromProfile,
   rebook,
   getMessages,
   postMessage,
-  proposePrice,
-  acceptPrice,
+  agreePrice,
 } = require('../controllers/bookings.controller');
 
 const router = express.Router();
@@ -27,6 +27,9 @@ router.get('/', auth, listBookings);
 // unambiguous.
 router.post('/book/:workerId', auth, requireRole('requester'), bookFromProfile);
 router.post('/rebook/:workerId', auth, requireRole('requester'), rebook);
+
+// Single booking (parties only) — opens a booking + its chat from a notification.
+router.get('/:id', auth, getBooking);
 
 // Worker-driven transitions.
 router.post('/:id/accept', auth, requireRole('worker'), acceptBooking);
@@ -43,7 +46,6 @@ router.get('/:id/payment-status', auth, getPaymentStatus);
 // controller enforces the party (ownership) check.
 router.get('/:id/messages', auth, getMessages);
 router.post('/:id/messages', auth, postMessage);
-router.post('/:id/propose-price', auth, proposePrice);
-router.post('/:id/accept-price', auth, acceptPrice);
+router.post('/:id/agree-price', auth, agreePrice);
 
 module.exports = router;

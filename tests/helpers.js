@@ -80,9 +80,9 @@ async function stageBooking(bookingId, taskId, stage) {
     await pool.query(`UPDATE payment_status SET status = 'released' WHERE booking_id = $1`, [bookingId]);
     await pool.query(`UPDATE tasks SET status = 'completed' WHERE task_id = $1`, [taskId]);
   }
-  // Any state at/after check-in implies the price was agreed (check-in gates on it).
+  // Any state at/after check-in implies a price was agreed (check-in gates on it).
   if (['checkedIn', 'in_progress', 'checkedOut', 'completed'].includes(stage)) {
-    await pool.query('UPDATE bookings SET price_agreed = true WHERE booking_id = $1', [bookingId]);
+    await pool.query('UPDATE bookings SET agreed_price = 5000 WHERE booking_id = $1', [bookingId]);
   }
 }
 

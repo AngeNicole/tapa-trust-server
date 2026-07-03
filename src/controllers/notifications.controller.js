@@ -3,10 +3,10 @@ const { pool } = require('../config/db');
 // Insert an in-app notification for a user. `db` may be the pool or a
 // transaction client (so lifecycle transitions can notify within their
 // existing transaction). In-app only — no web push / service workers.
-async function createNotification(db, userId, type, message) {
+async function createNotification(db, userId, type, message, bookingId = null) {
   await db.query(
-    'INSERT INTO notifications (user_id, type, message) VALUES ($1, $2, $3)',
-    [userId, type, message]
+    'INSERT INTO notifications (user_id, type, message, booking_id) VALUES ($1, $2, $3, $4)',
+    [userId, type, message, bookingId]
   );
 }
 
@@ -14,7 +14,7 @@ async function createNotification(db, userId, type, message) {
 async function listNotifications(req, res, next) {
   try {
     const result = await pool.query(
-      `SELECT notif_id, message, type, read, created_at
+      `SELECT notif_id, message, type, booking_id AS "bookingId", read, created_at
        FROM notifications
        WHERE user_id = $1
        ORDER BY created_at DESC, notif_id DESC`,
@@ -42,7 +42,7 @@ async function markRead(req, res, next) {
     }
     const result = await pool.query(
       `UPDATE notifications SET read = true WHERE notif_id = $1
-       RETURNING notif_id, message, type, read, created_at`,
+       RETURNING notif_id, message, type, booking_id AS "bookingId", read, created_at`,
       [id]
     );
     return res.json(result.rows[0]);

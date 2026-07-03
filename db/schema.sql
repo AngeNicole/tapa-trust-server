@@ -82,18 +82,18 @@ CREATE TABLE bookings (
   worker_id  INTEGER NOT NULL REFERENCES workers(worker_id) ON DELETE CASCADE,
   user_id    INTEGER NOT NULL REFERENCES users(user_id)     ON DELETE CASCADE,
   status     VARCHAR(20) NOT NULL DEFAULT 'pending',  -- pending | accepted | in_progress | completed | cancelled
-  proposed_amount     NUMERIC(12,2),                  -- current price proposal (null until proposed)
-  proposed_by_user_id INTEGER REFERENCES users(user_id) ON DELETE SET NULL, -- who made the current proposal
-  price_agreed        BOOLEAN NOT NULL DEFAULT false, -- true once the other party accepts; gates check-in
+  agreed_price NUMERIC(12,2),                          -- agreed price (null until agree-price); gates check-in
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 -- messages: per-booking chat between the requester and the booked worker.
+-- A message carries a text body and/or a price offer (amount).
 CREATE TABLE messages (
   message_id     SERIAL PRIMARY KEY,
   booking_id     INTEGER NOT NULL REFERENCES bookings(booking_id) ON DELETE CASCADE,
   sender_user_id INTEGER NOT NULL REFERENCES users(user_id)       ON DELETE CASCADE,
   body           TEXT,
+  amount         NUMERIC(12,2),
   created_at     TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX idx_messages_booking ON messages(booking_id);
@@ -113,6 +113,7 @@ CREATE TABLE notifications (
   user_id    INTEGER NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
   message    TEXT NOT NULL,
   type       VARCHAR(40),
+  booking_id INTEGER REFERENCES bookings(booking_id) ON DELETE CASCADE,  -- related booking (opens its chat); null for non-booking notifications
   read       BOOLEAN NOT NULL DEFAULT false,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
