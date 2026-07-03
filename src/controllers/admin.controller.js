@@ -23,7 +23,7 @@ async function createCategory(req, res, next) {
     const result = await pool.query(
       `INSERT INTO skill_categories (name, description)
        VALUES ($1, $2)
-       RETURNING category_id, name, description`,
+       RETURNING category_id, name, description, status`,
       [String(name).trim(), description ?? null]
     );
     return res.status(201).json(result.rows[0]);
@@ -32,6 +32,95 @@ async function createCategory(req, res, next) {
     if (err.code === '23505') {
       return res.status(409).json({ error: 'A category with this name already exists' });
     }
+    return next(err);
+  }
+}
+
+// PUT /api/admin/categories/:id  (role admin)  body { name?, description? }
+// Edit a category. Only the fields present in the body are changed.
+async function updateCategory(req, res, next) {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) {
+    return res.status(400).json({ error: 'category id must be an integer' });
+  }
+  const body = req.body || {};
+  const fields = [];
+  const values = [];
+  let i = 1;
+  if (body.name !== undefined) {
+    if (!String(body.name).trim()) {
+      return res.status(400).json({ error: 'name cannot be empty' });
+    }
+    fields.push(`name = $${i}`); values.push(String(body.name).trim()); i += 1;
+  }
+  if (body.description !== undefined) {
+    fields.push(`description = $${i}`); values.push(body.description ?? null); i += 1;
+  }
+  if (fields.length === 0) {
+    return res.status(400).json({ error: 'Provide at least one of: name, description' });
+  }
+  try {
+    values.push(id);
+    const result = await pool.query(
+      `UPDATE skill_categories SET ${fields.join(', ')} WHERE category_id = $${i}
+       RETURNING category_id, name, description, status`,
+      values
+    );
+    if (!result.rows[0]) {
+      return res.status(404).json({ error: 'Category not found' });
+    }
+    return res.json(result.rows[0]);
+  } catch (err) {
+    if (err.code === '23505') {
+      return res.status(409).json({ error: 'A category with this name already exists' });
+    }
+    return next(err);
+  }
+}
+
+// PATCH /api/admin/categories/:id/status  (role admin)  body { status: 'active'|'archived' }
+// Archive (status='archived') or restore (status='active') a category.
+async function setCategoryStatus(req, res, next) {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) {
+    return res.status(400).json({ error: 'category id must be an integer' });
+  }
+  const { status } = req.body || {};
+  if (!['active', 'archived'].includes(status)) {
+    return res.status(400).json({ error: "status must be 'active' or 'archived'" });
+  }
+  try {
+    const result = await pool.query(
+      `UPDATE skill_categories SET status = $1 WHERE category_id = $2
+       RETURNING category_id, name, description, status`,
+      [status, id]
+    );
+    if (!result.rows[0]) {
+      return res.status(404).json({ error: 'Category not found' });
+    }
+    return res.json(result.rows[0]);
+  } catch (err) {
+    return next(err);
+  }
+}
+
+// DELETE /api/admin/categories/:id  (role admin)
+// Removes a category. Tasks referencing it keep their row (category_id set null).
+async function deleteCategory(req, res, next) {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) {
+    return res.status(400).json({ error: 'category id must be an integer' });
+  }
+  try {
+    const result = await pool.query(
+      'DELETE FROM skill_categories WHERE category_id = $1 RETURNING category_id',
+      [id]
+    );
+    if (!result.rows[0]) {
+      return res.status(404).json({ error: 'Category not found' });
+    }
+    return res.json({ category_id: id, deleted: true });
+  } catch (err) {
     return next(err);
   }
 }
@@ -113,4 +202,12 @@ async function rejectWorker(req, res, next) {
   }
 }
 
-module.exports = { listUsers, createCategory, verifyWorker, rejectWorker };
+module.exports = {
+  listUsers,
+  createCategory,
+  updateCategory,
+  setCategoryStatus,
+  deleteCategory,
+  verifyWorker,
+  rejectWorker,
+};

@@ -60,7 +60,8 @@ CREATE TABLE workers (
 CREATE TABLE skill_categories (
   category_id SERIAL PRIMARY KEY,
   name        VARCHAR(80) NOT NULL UNIQUE,
-  description TEXT
+  description TEXT,
+  status      VARCHAR(20) NOT NULL DEFAULT 'active'   -- active | archived
 );
 
 -- tasks: a job posted by a requester (user) in a skill category.

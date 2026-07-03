@@ -30,6 +30,7 @@ async function run() {
           OR (table_name = 'bookings' AND column_name = 'agreed_price')
           OR (table_name = 'messages' AND column_name = 'amount')
           OR (table_name = 'notifications' AND column_name = 'booking_id')
+          OR (table_name = 'skill_categories' AND column_name = 'status')
        ORDER BY table_name, column_name`
     );
     console.log('Done — relevant columns now present:');

@@ -125,7 +125,9 @@ return `403`, missing resources `404`, and bad/missing fields `400`.
 
 ### Categories
 
-- `GET  /categories` — list skill categories (any authenticated user)
+- `GET  /categories` — list skill categories (any authenticated user). `?status=active` (default) | `archived` | `all` for the admin status tabs. Each item: `category_id`, `name`, `description`, `status`.
+
+Category management (admin) lives under `/admin` — see the Admin section.
 
 ### Workers
 
@@ -197,6 +199,9 @@ requester; confirm-completion → worker).
 ### Admin (oversight only — no transactional actions)
 
 - `GET  /admin/users` _(admin)_ — list all users
-- `POST /admin/categories` _(admin)_ — create a skill category (`name`, optional `description`)
+- `POST   /admin/categories` _(admin)_ — create a skill category (`name`, optional `description`)
+- `PUT    /admin/categories/:id` _(admin)_ — edit `name` and/or `description`
+- `PATCH  /admin/categories/:id/status` _(admin)_ — archive/restore (`status: 'active' | 'archived'`)
+- `DELETE /admin/categories/:id` _(admin)_ — delete a category (tasks that referenced it keep their row)
 - `POST /admin/workers/:workerId/verify` _(admin)_ — mark a worker verified (simulated workflow)
 - `POST /admin/workers/:workerId/reject` _(admin)_ — reject verification (optional `note`); status returns to unverified, worker may resubmit
