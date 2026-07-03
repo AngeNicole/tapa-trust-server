@@ -5,13 +5,17 @@ const {
 afterAll(closePool);
 
 describe('categories', () => {
-  test('GET /categories returns the 7 seeded categories', async () => {
+  test('GET /categories includes the 7 seeded categories', async () => {
     const { token } = await registerRequester();
     const res = await request(app).get('/api/categories').set(authHeader(token));
     expect(res.status).toBe(200);
-    expect(res.body.length).toBe(7);
+    // At least the 7 seeded ones (other tests may add categories in the shared DB).
+    expect(res.body.length).toBeGreaterThanOrEqual(7);
     expect(res.body.map((c) => c.name)).toEqual(
-      expect.arrayContaining(['Plumbing', 'Cleaning', 'Electrical', 'Basic tech setup'])
+      expect.arrayContaining([
+        'Plumbing', 'Cleaning', 'Moving / Lifting', 'Electrical',
+        'Furniture assembly', 'Mounting / Installation', 'Basic tech setup',
+      ])
     );
   });
 
