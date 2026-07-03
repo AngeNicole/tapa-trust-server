@@ -34,6 +34,10 @@ describe('booking trust loop — happy path (via book-from-profile)', () => {
     const accepted = await request(app).post(`/api/bookings/${id}/accept`).set(authHeader(worker.token));
     expect(accepted.body.status).toBe('accepted');
 
+    // agree on a price (gates check-in)
+    const agreed = await request(app).post(`/api/bookings/${id}/agree-price`).set(authHeader(requester.token)).send({ amount: 5000 });
+    expect(Number(agreed.body.agreedPrice)).toBe(5000);
+
     // checkin
     const checkedIn = await request(app).post(`/api/bookings/${id}/checkin`).set(authHeader(worker.token));
     expect(checkedIn.body.checkedIn).toBe(true);

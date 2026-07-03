@@ -28,6 +28,7 @@ async function getVerificationStatus(workerId, db = pool) {
     `SELECT CASE
        WHEN bool_or(status = 'approved') THEN 'verified'
        WHEN bool_or(status = 'pending')  THEN 'pending'
+       WHEN bool_or(status = 'rejected') THEN 'rejected'
        ELSE 'unverified' END AS verification
      FROM verification_request WHERE worker_id = $1`,
     [workerId]
@@ -79,6 +80,7 @@ async function listWorkers(req, res, next) {
                 SELECT CASE
                   WHEN bool_or(vr.status = 'approved') THEN 'verified'
                   WHEN bool_or(vr.status = 'pending')  THEN 'pending'
+                  WHEN bool_or(vr.status = 'rejected') THEN 'rejected'
                   ELSE 'unverified' END
                 FROM verification_request vr WHERE vr.worker_id = w.worker_id
               ), 'unverified') AS verification

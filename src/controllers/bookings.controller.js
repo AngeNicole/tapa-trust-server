@@ -13,12 +13,17 @@ const BOOKING_VIEW_SQL = `
     t.title AS "taskTitle",
     b.worker_id,
     w.name  AS "workerName",
-    ru.name AS "requesterName",
+    ru.name  AS "requesterName",
+    ru.phone AS "requesterPhone",
+    wu.phone AS "workerPhone",
     b.status,
+    b.agreed_price AS "agreedPrice",
     (cir.start_ts IS NOT NULL)           AS "checkedIn",
     COALESCE(cir.start_confirmed, false) AS "startConfirmed",
     (cir.end_ts IS NOT NULL)             AS "checkedOut",
     COALESCE(cir.end_confirmed, false)   AS "endConfirmed",
+    cir.start_ts AS "startTs",
+    cir.end_ts   AS "endTs",
     ps.status AS payment,
     CASE WHEN rv.review_id IS NOT NULL
          THEN json_build_object('rating', rv.rating, 'comment', rv.comment)
@@ -27,6 +32,7 @@ const BOOKING_VIEW_SQL = `
   JOIN tasks   t  ON t.task_id   = b.task_id
   JOIN workers w  ON w.worker_id = b.worker_id
   JOIN users   ru ON ru.user_id  = b.user_id
+  JOIN users   wu ON wu.user_id  = w.user_id
   LEFT JOIN check_in_record cir ON cir.booking_id = b.booking_id
   LEFT JOIN payment_status  ps  ON ps.booking_id  = b.booking_id
   LEFT JOIN reviews         rv  ON rv.booking_id  = b.booking_id
@@ -41,6 +47,7 @@ async function bookingViewById(bookingId, db = pool) {
 async function loadBooking(bookingId, db = pool) {
   const r = await db.query(
     `SELECT b.booking_id, b.task_id, b.worker_id, b.user_id AS requester_user_id, b.status,
+            b.agreed_price,
             w.user_id AS worker_user_id,
             cir.start_ts, cir.end_ts, cir.start_confirmed, cir.end_confirmed,
             ps.status AS payment_status, ps.amount
@@ -124,7 +131,7 @@ async function acceptBooking(req, res, next) {
       return res.status(400).json({ error: `Cannot accept a booking with status '${booking.status}'` });
     }
     await pool.query(`UPDATE bookings SET status = 'accepted' WHERE booking_id = $1`, [booking.booking_id]);
-    await createNotification(pool, booking.requester_user_id, 'booking_accepted', 'Your booking was accepted.');
+    await createNotification(pool, booking.requester_user_id, 'booking_accepted', 'Your booking was accepted.', booking.booking_id);
     return res.json(await bookingViewById(booking.booking_id));
   } catch (err) {
     return next(err);
@@ -139,11 +146,14 @@ async function checkin(req, res, next) {
     if (booking.status !== 'accepted') {
       return res.status(400).json({ error: 'Worker must accept the booking before checking in' });
     }
+    if (booking.agreed_price === null || booking.agreed_price === undefined) {
+      return res.status(400).json({ error: 'Agree on the price before checking in.' });
+    }
     if (booking.start_ts) {
       return res.status(400).json({ error: 'Worker has already checked in' });
     }
     await pool.query('UPDATE check_in_record SET start_ts = now() WHERE booking_id = $1', [booking.booking_id]);
-    await createNotification(pool, booking.requester_user_id, 'checkin', 'The worker checked in. Confirm start to proceed.');
+    await createNotification(pool, booking.requester_user_id, 'checkin', 'The worker checked in. Confirm start to proceed.', booking.booking_id);
     return res.json(await bookingViewById(booking.booking_id));
   } catch (err) {
     return next(err);
@@ -170,7 +180,7 @@ async function confirmStart(req, res, next) {
     );
     await client.query(`UPDATE bookings SET status = 'in_progress' WHERE booking_id = $1`, [booking.booking_id]);
     await client.query(`UPDATE payment_status SET status = 'confirmed' WHERE booking_id = $1`, [booking.booking_id]);
-    await createNotification(client, booking.worker_user_id, 'start_confirmed', 'The requester confirmed start. You can begin work.');
+    await createNotification(client, booking.worker_user_id, 'start_confirmed', 'The requester confirmed start. You can begin work.', booking.booking_id);
     const view = await bookingViewById(booking.booking_id, client);
     await client.query('COMMIT');
     return res.json(view);
@@ -194,7 +204,7 @@ async function checkout(req, res, next) {
       return res.status(400).json({ error: 'Worker has already checked out' });
     }
     await pool.query('UPDATE check_in_record SET end_ts = now() WHERE booking_id = $1', [booking.booking_id]);
-    await createNotification(pool, booking.requester_user_id, 'checkout', 'The worker checked out. Confirm completion to release payment.');
+    await createNotification(pool, booking.requester_user_id, 'checkout', 'The worker checked out. Confirm completion to release payment.', booking.booking_id);
     return res.json(await bookingViewById(booking.booking_id));
   } catch (err) {
     return next(err);
@@ -222,7 +232,7 @@ async function confirmCompletion(req, res, next) {
     await client.query(`UPDATE bookings SET status = 'completed' WHERE booking_id = $1`, [booking.booking_id]);
     await client.query(`UPDATE payment_status SET status = 'released' WHERE booking_id = $1`, [booking.booking_id]);
     await client.query(`UPDATE tasks SET status = 'completed' WHERE task_id = $1`, [booking.task_id]);
-    await createNotification(client, booking.worker_user_id, 'completed', 'The requester confirmed completion. Payment released.');
+    await createNotification(client, booking.worker_user_id, 'completed', 'The requester confirmed completion. Payment released.', booking.booking_id);
     const view = await bookingViewById(booking.booking_id, client);
     await client.query('COMMIT');
     return res.json(view);
@@ -297,7 +307,7 @@ async function createWorkerBooking(client, { requesterUserId, workerId, titlePre
   await client.query(`INSERT INTO payment_status (booking_id, status) VALUES ($1, 'pending')`, [bookingId]);
   await client.query('INSERT INTO check_in_record (booking_id) VALUES ($1)', [bookingId]);
   await client.query(`UPDATE tasks SET status = 'assigned' WHERE task_id = $1`, [taskId]);
-  await createNotification(client, worker.rows[0].user_id, 'booking_request', 'You have a new booking request.');
+  await createNotification(client, worker.rows[0].user_id, 'booking_request', 'You have a new booking request.', bookingId);
 
   return { bookingId };
 }
@@ -345,8 +355,152 @@ function rebook(req, res, next) {
   return bookWorker(req, res, next, 'Rebooking');
 }
 
+// =====================================================================
+// Booking chat + structured price agreement
+// =====================================================================
+
+// Either party (requester or the booked worker) to a booking.
+function isParty(booking, user) {
+  return booking.requester_user_id === user.user_id || booking.worker_user_id === user.user_id;
+}
+
+// The other party's user_id, given the caller.
+function otherPartyId(booking, userId) {
+  return userId === booking.requester_user_id ? booking.worker_user_id : booking.requester_user_id;
+}
+
+// Load a booking and enforce that the caller is a party. Returns the booking, or
+// null after sending 400/404/403. Shared by the single-GET + chat + price
+// endpoints (both parties, either role — used instead of the role-based guard()).
+async function partyGuard(req, res) {
+  const id = parseId(req.params.id);
+  if (id === null) {
+    res.status(400).json({ error: 'booking id must be an integer' });
+    return null;
+  }
+  const booking = await loadBooking(id);
+  if (!booking) {
+    res.status(404).json({ error: 'Booking not found' });
+    return null;
+  }
+  if (!isParty(booking, req.user)) {
+    res.status(403).json({ error: 'This booking does not belong to you' });
+    return null;
+  }
+  return booking;
+}
+
+// GET /api/bookings/:id — a single BookingView (parties only). Lets the client
+// open a booking (and its chat) straight from a notification.
+async function getBooking(req, res, next) {
+  try {
+    const booking = await partyGuard(req, res);
+    if (!booking) return undefined;
+    return res.json(await bookingViewById(booking.booking_id));
+  } catch (err) {
+    return next(err);
+  }
+}
+
+// GET /api/bookings/:id/messages — { agreedPrice, messages[] } oldest→newest
+// (parties only). Each message carries sender identity + role and an optional
+// price offer (amount).
+async function getMessages(req, res, next) {
+  try {
+    const booking = await partyGuard(req, res);
+    if (!booking) return undefined;
+    const result = await pool.query(
+      `SELECT m.message_id, m.sender_user_id, u.name AS sender_name, m.body, m.amount, m.created_at
+       FROM messages m
+       JOIN users u ON u.user_id = m.sender_user_id
+       WHERE m.booking_id = $1
+       ORDER BY m.created_at ASC, m.message_id ASC`,
+      [booking.booking_id]
+    );
+    const messages = result.rows.map((m) => ({
+      message_id: m.message_id,
+      body: m.body,
+      amount: m.amount === null ? null : Number(m.amount),
+      created_at: m.created_at,
+      senderUserId: m.sender_user_id,
+      senderName: m.sender_name,
+      senderRole: m.sender_user_id === booking.requester_user_id ? 'requester' : 'worker',
+    }));
+    return res.json({
+      agreedPrice: booking.agreed_price === null ? null : Number(booking.agreed_price),
+      messages,
+    });
+  } catch (err) {
+    return next(err);
+  }
+}
+
+// POST /api/bookings/:id/messages  body { body, amount } — send a message and/or
+// a price offer (parties only). At least one of body/amount must be present;
+// amount, if present, must be > 0. An offer notifies the other party.
+async function postMessage(req, res, next) {
+  try {
+    const booking = await partyGuard(req, res);
+    if (!booking) return undefined;
+    const raw = req.body || {};
+    const body = (raw.body !== undefined && raw.body !== null && String(raw.body).trim() !== '')
+      ? String(raw.body).trim() : null;
+    let amount = null;
+    if (raw.amount !== undefined && raw.amount !== null) {
+      amount = Number(raw.amount);
+      if (!Number.isFinite(amount) || amount <= 0) {
+        return res.status(400).json({ error: 'amount must be a positive number' });
+      }
+    }
+    if (body === null && amount === null) {
+      return res.status(400).json({ error: 'a message must have a body and/or an amount' });
+    }
+    const result = await pool.query(
+      `INSERT INTO messages (booking_id, sender_user_id, body, amount)
+       VALUES ($1, $2, $3, $4)
+       RETURNING message_id, booking_id, sender_user_id, body, amount, created_at`,
+      [booking.booking_id, req.user.user_id, body, amount]
+    );
+    const type = amount !== null ? 'offer' : 'message';
+    const note = amount !== null ? `New price offer: ${amount}` : 'You have a new message';
+    await createNotification(pool, otherPartyId(booking, req.user.user_id), type, note, booking.booking_id);
+    return res.status(201).json(result.rows[0]);
+  } catch (err) {
+    return next(err);
+  }
+}
+
+// POST /api/bookings/:id/agree-price  body { amount } — records the agreed price
+// (parties only): sets bookings.agreed_price AND writes payment_status.amount, in
+// one transaction. Returns the BookingView (carrying agreedPrice). Gates check-in.
+async function agreePrice(req, res, next) {
+  const booking = await partyGuard(req, res);
+  if (!booking) return undefined;
+  const amount = Number((req.body || {}).amount);
+  if (!Number.isFinite(amount) || amount <= 0) {
+    return res.status(400).json({ error: 'amount must be a positive number' });
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query('UPDATE bookings SET agreed_price = $1 WHERE booking_id = $2', [amount, booking.booking_id]);
+    await client.query('UPDATE payment_status SET amount = $1 WHERE booking_id = $2', [amount, booking.booking_id]);
+    const view = await bookingViewById(booking.booking_id, client);
+    await client.query('COMMIT');
+    await createNotification(pool, otherPartyId(booking, req.user.user_id), 'price_agreed', `Price agreed: ${amount}`, booking.booking_id);
+    return res.json(view);
+  } catch (err) {
+    try { await client.query('ROLLBACK'); } catch (_) { /* no active transaction */ }
+    return next(err);
+  } finally {
+    client.release();
+  }
+}
+
 module.exports = {
   listBookings,
+  getBooking,
   acceptBooking,
   checkin,
   confirmStart,
@@ -355,5 +509,8 @@ module.exports = {
   getPaymentStatus,
   bookFromProfile,
   rebook,
+  getMessages,
+  postMessage,
+  agreePrice,
   bookingViewById,
 };

@@ -87,14 +87,23 @@ async function rejectWorker(req, res, next) {
       await client.query('ROLLBACK');
       return res.status(404).json({ error: 'Worker not found' });
     }
-    // Reject any non-rejected request(s) so the derived status returns to unverified.
-    await client.query(
+    // Reject the worker's non-rejected request(s). The derived status then
+    // becomes 'rejected' (distinct from 'unverified' — the admin's Rejected tab).
+    // If none exist, record an admin-initiated rejected request.
+    const updated = await client.query(
       `UPDATE verification_request SET status = 'rejected', note = $2
        WHERE worker_id = $1 AND status IN ('pending', 'approved')`,
       [workerId, note ?? null]
     );
+    if (updated.rowCount === 0) {
+      await client.query(
+        `INSERT INTO verification_request (worker_id, evidence, status, note)
+         VALUES ($1, 'SIMULATED — admin-rejected', 'rejected', $2)`,
+        [workerId, note ?? null]
+      );
+    }
     await client.query('COMMIT');
-    return res.json({ worker_id: workerId, verification: 'unverified', note: note ?? null });
+    return res.json({ worker_id: workerId, verification: 'rejected', note: note ?? null });
   } catch (err) {
     // Guard the rollback so a failed rollback can't mask the original error.
     try { await client.query('ROLLBACK'); } catch (_) { /* no active transaction */ }

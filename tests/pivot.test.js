@@ -14,6 +14,8 @@ async function bookAcceptCheckin() {
   const created = await request(app).post(`/api/bookings/book/${worker.worker_id}`).set(authHeader(requester.token));
   const bookingId = created.body.booking_id;
   await request(app).post(`/api/bookings/${bookingId}/accept`).set(authHeader(worker.token));
+  // agree on a price (gates check-in)
+  await request(app).post(`/api/bookings/${bookingId}/agree-price`).set(authHeader(requester.token)).send({ amount: 5000 });
   await request(app).post(`/api/bookings/${bookingId}/checkin`).set(authHeader(worker.token));
   return { requester, worker, bookingId };
 }
@@ -233,7 +235,7 @@ describe('simulated digital-ID verification', () => {
     expect((await request(app).post(`/api/admin/workers/${worker.worker_id}/verify`).set(authHeader(worker.token))).status).toBe(403);
   });
 
-  test('full status path: pending → reject → unverified → resubmit → pending → approve → verified', async () => {
+  test('full status path: pending → reject → rejected → resubmit → pending → approve → verified', async () => {
     const worker = await registerWorker();
     const requester = await registerRequester();
     const adminToken = await createAdmin();
@@ -244,12 +246,12 @@ describe('simulated digital-ID verification', () => {
     await request(app).post('/api/workers/me/verification').set(authHeader(worker.token)).send({ reference: 'demo-1' });
     expect(await profileVerification()).toBe('pending');
 
-    // reject -> unverified (with note)
+    // reject -> rejected (distinct from unverified), with note
     const rej = await request(app).post(`/api/admin/workers/${worker.worker_id}/reject`).set(authHeader(adminToken)).send({ note: 'blurry photo' });
     expect(rej.status).toBe(200);
-    expect(rej.body.verification).toBe('unverified');
+    expect(rej.body.verification).toBe('rejected');
     expect(rej.body.note).toBe('blurry photo');
-    expect(await profileVerification()).toBe('unverified');
+    expect(await profileVerification()).toBe('rejected');
 
     // resubmit -> fresh pending (must not error on the existing rejected row)
     const resub = await request(app).post('/api/workers/me/verification').set(authHeader(worker.token)).send({ reference: 'demo-2' });
