@@ -17,6 +17,7 @@ const BOOKING_VIEW_SQL = `
     ru.phone AS "requesterPhone",
     wu.phone AS "workerPhone",
     b.status,
+    b.cancel_reason AS "cancelReason",
     b.agreed_price AS "agreedPrice",
     (cir.start_ts IS NOT NULL)           AS "checkedIn",
     COALESCE(cir.start_confirmed, false) AS "startConfirmed",
@@ -132,6 +133,32 @@ async function acceptBooking(req, res, next) {
     }
     await pool.query(`UPDATE bookings SET status = 'accepted' WHERE booking_id = $1`, [booking.booking_id]);
     await createNotification(pool, booking.requester_user_id, 'booking_accepted', 'Your booking was accepted.', booking.booking_id);
+    return res.json(await bookingViewById(booking.booking_id));
+  } catch (err) {
+    return next(err);
+  }
+}
+
+// POST /api/bookings/:id/reject  (role worker, owns booking)  body { reason }
+// The worker declines the job with a reason: status -> 'cancelled', reason stored,
+// requester notified. Allowed only before work starts (pending or accepted).
+async function rejectBooking(req, res, next) {
+  try {
+    const booking = await guard(req, res, { role: 'worker' });
+    if (!booking) return undefined;
+    if (!['pending', 'accepted'].includes(booking.status)) {
+      return res.status(400).json({ error: `Cannot reject a booking with status '${booking.status}'` });
+    }
+    const reason = (req.body || {}).reason;
+    if (!reason || !String(reason).trim()) {
+      return res.status(400).json({ error: 'reason is required' });
+    }
+    await pool.query(
+      `UPDATE bookings SET status = 'cancelled', cancel_reason = $1 WHERE booking_id = $2`,
+      [String(reason).trim(), booking.booking_id]
+    );
+    await createNotification(pool, booking.requester_user_id, 'booking_rejected',
+      `The worker declined the job: ${String(reason).trim()}`, booking.booking_id);
     return res.json(await bookingViewById(booking.booking_id));
   } catch (err) {
     return next(err);
@@ -502,6 +529,7 @@ module.exports = {
   listBookings,
   getBooking,
   acceptBooking,
+  rejectBooking,
   checkin,
   confirmStart,
   checkout,

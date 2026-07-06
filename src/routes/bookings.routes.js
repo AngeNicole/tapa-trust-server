@@ -9,6 +9,7 @@ const {
   checkout,
   confirmCompletion,
   getBooking,
+  rejectBooking,
   getPaymentStatus,
   bookFromProfile,
   rebook,
@@ -33,6 +34,7 @@ router.get('/:id', auth, getBooking);
 
 // Worker-driven transitions.
 router.post('/:id/accept', auth, requireRole('worker'), acceptBooking);
+router.post('/:id/reject', auth, requireRole('worker'), rejectBooking);
 router.post('/:id/checkin', auth, requireRole('worker'), checkin);
 router.post('/:id/checkout', auth, requireRole('worker'), checkout);
 
