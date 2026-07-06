@@ -92,15 +92,20 @@ describe('agree-price', () => {
   });
 });
 
-describe('check-in gated on agreed price', () => {
-  test('checkin blocked (400) until agree-price, then succeeds', async () => {
+describe('check-in gated on escrow deposit', () => {
+  test('checkin blocked (400) until escrow held, then succeeds', async () => {
     const { requester, worker, bookingId } = await makeBookingAt('accepted');
 
+    // agreeing a price is not enough — check-in requires escrow held
+    await request(app).post(`/api/bookings/${bookingId}/agree-price`).set(authHeader(requester.token)).send({ amount: 6000 });
     const blocked = await request(app).post(`/api/bookings/${bookingId}/checkin`).set(authHeader(worker.token));
     expect(blocked.status).toBe(400);
-    expect(blocked.body.error).toMatch(/price/i);
+    expect(blocked.body.error).toMatch(/escrow|deposit/i);
 
-    await request(app).post(`/api/bookings/${bookingId}/agree-price`).set(authHeader(requester.token)).send({ amount: 6000 });
+    // finalize agreement + deposit
+    await request(app).post(`/api/bookings/${bookingId}/agreement`).set(authHeader(requester.token)).send({ amount: 6000, signature: 'R' });
+    await request(app).post(`/api/bookings/${bookingId}/agreement/sign`).set(authHeader(worker.token)).send({ signature: 'W' });
+    await request(app).post(`/api/bookings/${bookingId}/escrow/deposit`).set(authHeader(requester.token));
 
     const ok = await request(app).post(`/api/bookings/${bookingId}/checkin`).set(authHeader(worker.token));
     expect(ok.status).toBe(200);

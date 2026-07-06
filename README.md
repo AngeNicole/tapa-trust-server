@@ -166,17 +166,27 @@ booking views and worker history, written only by booking creation/completion.
 
 - `POST /bookings/book/:workerId` _(requester)_ — **book from a worker profile** (the requester entry point): auto-creates the task server-side, then a pending booking + payment + check-in. Requesters never post a task.
 - `GET  /bookings` — bookings scoped to the caller (requester sees their own; worker sees theirs)
-- `POST /bookings/:id/accept` _(worker)_ — `pending` → `accepted`
-- `POST /bookings/:id/reject` _(worker)_ — decline the job with a `reason` → `status: 'cancelled'`, `cancelReason` stored, requester notified (allowed only before work starts)
-- `POST /bookings/:id/checkin` _(worker)_ — record start time
-- `POST /bookings/:id/confirm-start` _(requester)_ — `accepted` → `in_progress`, payment → `confirmed`
+- `GET  /bookings/:id` _(party)_ — a single BookingView (opens a booking + its chat from a notification)
+- `POST /bookings/:id/accept` _(worker)_ — `pending` → `accepted` (worker auto-set unavailable)
+- `POST /bookings/:id/checkin` _(worker)_ — record start time (**requires escrow `held`**)
+- `POST /bookings/:id/confirm-start` _(requester)_ — `accepted` → `in_progress` (escrow stays held)
 - `POST /bookings/:id/checkout` _(worker)_ — record end time
-- `POST /bookings/:id/confirm-completion` _(requester)_ — `in_progress` → `completed`, payment → `released`, task → `completed`
-- `GET  /bookings/:id/payment-status` — `{ status, amount }` (readable only by the booking's parties)
-- `POST /bookings/rebook/:workerId` _(requester)_ — one-tap rebook: fresh task + new pending booking
+- `POST /bookings/:id/confirm-completion` _(requester)_ — `in_progress` → `completed`, **escrow released** (+ earnings recorded, worker freed), task → `completed`
+- `GET  /bookings/:id/payment-status` — `{ status, amount }` (party only)
+- `POST /bookings/rebook/:workerId` _(requester)_ — one-tap rebook
 
-Completion requires **mutual** confirmation: the worker's check-in/out only advances the booking
-once the requester confirms each step.
+**Chat, price & digital agreement** (party only):
+- `GET  /bookings/:id/messages` — `{ chatId, agreedPrice, messages[] }` (each message may carry an `amount` offer)
+- `POST /bookings/:id/messages` — `{ body, amount }` (≥1 non-null)
+- `POST /bookings/:id/agree-price` — `{ amount }` (quick agreed price)
+- `POST /bookings/:id/agreement` _(requester)_ — `{ amount, signature }` propose + sign the finalize agreement
+- `POST /bookings/:id/agreement/sign` _(worker)_ — `{ signature }` counter-sign → `signed`
+- `POST /bookings/:id/escrow/deposit` _(requester)_ — hold the agreed price in escrow (needs a signed agreement)
+- `POST /bookings/:id/decline` _(either party)_ — `{ reason }` → `cancelled`; held escrow refunded, agreement voided, worker freed
+
+**State machine:** pending → accepted → negotiate → finalize (requester signs → worker signs) → deposit (escrow held) → check-in → confirm-start → check-out → confirm-completion (escrow released). Decline before completion → cancelled (escrow refunded). Completion requires **mutual** confirmation; check-in is gated on escrow being **held**.
+
+BookingView carries (camelCase): `chatId`, `agreedPrice`, `cancelReason`, `agreement { agreementId, agreedPrice, status, requesterSigned, workerSigned, requesterSignature, workerSignature }`, `escrow { status, amount }` (`pending|held|released|refunded`), plus the existing status/check-in/phone/timestamp/review fields.
 
 ### Reviews
 
@@ -190,12 +200,13 @@ once the requester confirms each step.
 
 ### Notifications (in-app only — no web push)
 
-- `GET  /notifications` — the caller's notifications, newest first
+- `GET  /notifications` — the caller's notifications, newest first. Each item carries `bookingId` (camelCase, nullable) + `type`.
 - `POST /notifications/:id/read` — mark one read (owner only)
 
-Lifecycle transitions insert an in-app notification for the other party (booking
-request → worker; check-in → requester; confirm-start → worker; check-out →
-requester; confirm-completion → worker).
+Every booking notification carries `bookingId` so the client can open the booking/chat.
+Types include: `booking_request`, `booking_accepted`, `checkin`, `start_confirmed`,
+`checkout`, `completed`, `message`, `offer`, `price_agreed`, `agreement_proposed`,
+`agreement_signed`, `escrow_deposited`, `booking_declined`.
 
 ### Admin (oversight only — no transactional actions)
 

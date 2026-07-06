@@ -48,6 +48,13 @@ async function listPublicWorkers(req, res, next) {
     'w.is_available = true',
     "btrim(coalesce(w.skills, '')) <> ''",
     "btrim(coalesce(w.bio, '')) <> ''",
+    // 1-hour auto-unavailable fallback (computed, no cron).
+    `NOT EXISTS (
+      SELECT 1 FROM bookings b
+      WHERE b.worker_id = w.worker_id
+        AND b.status IN ('accepted', 'in_progress')
+        AND b.created_at > now() - interval '1 hour'
+    )`,
   ];
   const params = [];
   if (skill) {

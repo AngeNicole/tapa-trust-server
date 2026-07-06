@@ -9,13 +9,16 @@ const {
   checkout,
   confirmCompletion,
   getBooking,
-  rejectBooking,
   getPaymentStatus,
   bookFromProfile,
   rebook,
   getMessages,
   postMessage,
   agreePrice,
+  proposeAgreement,
+  signAgreement,
+  depositEscrow,
+  declineBooking,
 } = require('../controllers/bookings.controller');
 
 const router = express.Router();
@@ -34,7 +37,6 @@ router.get('/:id', auth, getBooking);
 
 // Worker-driven transitions.
 router.post('/:id/accept', auth, requireRole('worker'), acceptBooking);
-router.post('/:id/reject', auth, requireRole('worker'), rejectBooking);
 router.post('/:id/checkin', auth, requireRole('worker'), checkin);
 router.post('/:id/checkout', auth, requireRole('worker'), checkout);
 
@@ -44,10 +46,14 @@ router.post('/:id/confirm-completion', auth, requireRole('requester'), confirmCo
 
 router.get('/:id/payment-status', auth, getPaymentStatus);
 
-// Chat + structured price agreement — open to either party (any role); the
-// controller enforces the party (ownership) check.
+// Chat, price, digital agreement, escrow, decline — participant-only (either
+// role); the controller enforces the party check and any role-specific rules.
 router.get('/:id/messages', auth, getMessages);
 router.post('/:id/messages', auth, postMessage);
 router.post('/:id/agree-price', auth, agreePrice);
+router.post('/:id/agreement', auth, proposeAgreement);
+router.post('/:id/agreement/sign', auth, signAgreement);
+router.post('/:id/escrow/deposit', auth, depositEscrow);
+router.post('/:id/decline', auth, declineBooking);
 
 module.exports = router;

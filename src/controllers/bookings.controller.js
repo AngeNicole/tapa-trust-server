@@ -26,9 +26,21 @@ const BOOKING_VIEW_SQL = `
     cir.start_ts AS "startTs",
     cir.end_ts   AS "endTs",
     ps.status AS payment,
+    ch.chat_id AS "chatId",
     CASE WHEN rv.review_id IS NOT NULL
          THEN json_build_object('rating', rv.rating, 'comment', rv.comment)
-         ELSE NULL END AS review
+         ELSE NULL END AS review,
+    CASE WHEN ag.agreement_id IS NOT NULL
+         THEN json_build_object(
+           'agreementId', ag.agreement_id,
+           'agreedPrice', ag.agreed_price,
+           'status', ag.status,
+           'requesterSigned', ag.requester_signature IS NOT NULL,
+           'workerSigned', ag.worker_signature IS NOT NULL,
+           'requesterSignature', ag.requester_signature,
+           'workerSignature', ag.worker_signature)
+         ELSE NULL END AS agreement,
+    json_build_object('status', ps.status, 'amount', ps.amount) AS escrow
   FROM bookings b
   JOIN tasks   t  ON t.task_id   = b.task_id
   JOIN workers w  ON w.worker_id = b.worker_id
@@ -37,6 +49,8 @@ const BOOKING_VIEW_SQL = `
   LEFT JOIN check_in_record cir ON cir.booking_id = b.booking_id
   LEFT JOIN payment_status  ps  ON ps.booking_id  = b.booking_id
   LEFT JOIN reviews         rv  ON rv.booking_id  = b.booking_id
+  LEFT JOIN chat            ch  ON ch.booking_id  = b.booking_id
+  LEFT JOIN agreement       ag  ON ag.booking_id  = b.booking_id
 `;
 
 async function bookingViewById(bookingId, db = pool) {
@@ -51,11 +65,15 @@ async function loadBooking(bookingId, db = pool) {
             b.agreed_price,
             w.user_id AS worker_user_id,
             cir.start_ts, cir.end_ts, cir.start_confirmed, cir.end_confirmed,
-            ps.status AS payment_status, ps.amount
+            ps.status AS payment_status, ps.amount,
+            ch.chat_id,
+            ag.agreement_id, ag.status AS agreement_status
      FROM bookings b
      JOIN workers w ON w.worker_id = b.worker_id
      LEFT JOIN check_in_record cir ON cir.booking_id = b.booking_id
      LEFT JOIN payment_status  ps  ON ps.booking_id  = b.booking_id
+     LEFT JOIN chat            ch  ON ch.booking_id  = b.booking_id
+     LEFT JOIN agreement       ag  ON ag.booking_id  = b.booking_id
      WHERE b.booking_id = $1`,
     [bookingId]
   );
@@ -132,33 +150,9 @@ async function acceptBooking(req, res, next) {
       return res.status(400).json({ error: `Cannot accept a booking with status '${booking.status}'` });
     }
     await pool.query(`UPDATE bookings SET status = 'accepted' WHERE booking_id = $1`, [booking.booking_id]);
+    // Auto-unavailable while committed to this job.
+    await pool.query('UPDATE workers SET is_available = false WHERE worker_id = $1', [booking.worker_id]);
     await createNotification(pool, booking.requester_user_id, 'booking_accepted', 'Your booking was accepted.', booking.booking_id);
-    return res.json(await bookingViewById(booking.booking_id));
-  } catch (err) {
-    return next(err);
-  }
-}
-
-// POST /api/bookings/:id/reject  (role worker, owns booking)  body { reason }
-// The worker declines the job with a reason: status -> 'cancelled', reason stored,
-// requester notified. Allowed only before work starts (pending or accepted).
-async function rejectBooking(req, res, next) {
-  try {
-    const booking = await guard(req, res, { role: 'worker' });
-    if (!booking) return undefined;
-    if (!['pending', 'accepted'].includes(booking.status)) {
-      return res.status(400).json({ error: `Cannot reject a booking with status '${booking.status}'` });
-    }
-    const reason = (req.body || {}).reason;
-    if (!reason || !String(reason).trim()) {
-      return res.status(400).json({ error: 'reason is required' });
-    }
-    await pool.query(
-      `UPDATE bookings SET status = 'cancelled', cancel_reason = $1 WHERE booking_id = $2`,
-      [String(reason).trim(), booking.booking_id]
-    );
-    await createNotification(pool, booking.requester_user_id, 'booking_rejected',
-      `The worker declined the job: ${String(reason).trim()}`, booking.booking_id);
     return res.json(await bookingViewById(booking.booking_id));
   } catch (err) {
     return next(err);
@@ -173,8 +167,8 @@ async function checkin(req, res, next) {
     if (booking.status !== 'accepted') {
       return res.status(400).json({ error: 'Worker must accept the booking before checking in' });
     }
-    if (booking.agreed_price === null || booking.agreed_price === undefined) {
-      return res.status(400).json({ error: 'Agree on the price before checking in.' });
+    if (booking.payment_status !== 'held') {
+      return res.status(400).json({ error: 'Requester must deposit to escrow before work starts.' });
     }
     if (booking.start_ts) {
       return res.status(400).json({ error: 'Worker has already checked in' });
@@ -188,7 +182,8 @@ async function checkin(req, res, next) {
 }
 
 // POST /api/bookings/:id/confirm-start  (role requester)
-//   → start_confirmed = true, status 'in_progress', payment 'confirmed'
+//   → start_confirmed = true, status 'in_progress'. Escrow stays 'held'
+//   (deposited earlier) until completion releases it.
 async function confirmStart(req, res, next) {
   const client = await pool.connect();
   try {
@@ -206,7 +201,6 @@ async function confirmStart(req, res, next) {
       [booking.booking_id]
     );
     await client.query(`UPDATE bookings SET status = 'in_progress' WHERE booking_id = $1`, [booking.booking_id]);
-    await client.query(`UPDATE payment_status SET status = 'confirmed' WHERE booking_id = $1`, [booking.booking_id]);
     await createNotification(client, booking.worker_user_id, 'start_confirmed', 'The requester confirmed start. You can begin work.', booking.booking_id);
     const view = await bookingViewById(booking.booking_id, client);
     await client.query('COMMIT');
@@ -239,7 +233,9 @@ async function checkout(req, res, next) {
 }
 
 // POST /api/bookings/:id/confirm-completion  (role requester)
-//   → end_confirmed = true, status 'completed', payment 'released', task 'completed'
+//   → end_confirmed = true, status 'completed', task 'completed'. Releases held
+//   escrow (status 'released' + released_at), writes the worker's earnings_record,
+//   and marks the worker available again.
 async function confirmCompletion(req, res, next) {
   const client = await pool.connect();
   try {
@@ -257,8 +253,21 @@ async function confirmCompletion(req, res, next) {
       [booking.booking_id]
     );
     await client.query(`UPDATE bookings SET status = 'completed' WHERE booking_id = $1`, [booking.booking_id]);
-    await client.query(`UPDATE payment_status SET status = 'released' WHERE booking_id = $1`, [booking.booking_id]);
     await client.query(`UPDATE tasks SET status = 'completed' WHERE task_id = $1`, [booking.task_id]);
+    // Release held escrow and record the worker's earnings.
+    if (booking.payment_status === 'held') {
+      const pay = await client.query(
+        `UPDATE payment_status SET status = 'released', released_at = now()
+         WHERE booking_id = $1 RETURNING amount`,
+        [booking.booking_id]
+      );
+      await client.query(
+        'INSERT INTO earnings_record (worker_id, booking_id, amount) VALUES ($1, $2, $3)',
+        [booking.worker_id, booking.booking_id, pay.rows[0] ? pay.rows[0].amount : 0]
+      );
+    }
+    // Worker is free again.
+    await client.query('UPDATE workers SET is_available = true WHERE worker_id = $1', [booking.worker_id]);
     await createNotification(client, booking.worker_user_id, 'completed', 'The requester confirmed completion. Payment released.', booking.booking_id);
     const view = await bookingViewById(booking.booking_id, client);
     await client.query('COMMIT');
@@ -333,6 +342,7 @@ async function createWorkerBooking(client, { requesterUserId, workerId, titlePre
 
   await client.query(`INSERT INTO payment_status (booking_id, status) VALUES ($1, 'pending')`, [bookingId]);
   await client.query('INSERT INTO check_in_record (booking_id) VALUES ($1)', [bookingId]);
+  await client.query('INSERT INTO chat (booking_id) VALUES ($1)', [bookingId]);
   await client.query(`UPDATE tasks SET status = 'assigned' WHERE task_id = $1`, [taskId]);
   await createNotification(client, worker.rows[0].user_id, 'booking_request', 'You have a new booking request.', bookingId);
 
@@ -454,6 +464,7 @@ async function getMessages(req, res, next) {
       senderRole: m.sender_user_id === booking.requester_user_id ? 'requester' : 'worker',
     }));
     return res.json({
+      chatId: booking.chat_id ?? null,
       agreedPrice: booking.agreed_price === null ? null : Number(booking.agreed_price),
       messages,
     });
@@ -483,10 +494,10 @@ async function postMessage(req, res, next) {
       return res.status(400).json({ error: 'a message must have a body and/or an amount' });
     }
     const result = await pool.query(
-      `INSERT INTO messages (booking_id, sender_user_id, body, amount)
-       VALUES ($1, $2, $3, $4)
-       RETURNING message_id, booking_id, sender_user_id, body, amount, created_at`,
-      [booking.booking_id, req.user.user_id, body, amount]
+      `INSERT INTO messages (booking_id, chat_id, sender_user_id, body, amount)
+       VALUES ($1, $2, $3, $4, $5)
+       RETURNING message_id, booking_id, chat_id, sender_user_id, body, amount, created_at`,
+      [booking.booking_id, booking.chat_id ?? null, req.user.user_id, body, amount]
     );
     const type = amount !== null ? 'offer' : 'message';
     const note = amount !== null ? `New price offer: ${amount}` : 'You have a new message';
@@ -525,11 +536,162 @@ async function agreePrice(req, res, next) {
   }
 }
 
+// =====================================================================
+// Digital agreement (finalize) + escrow + decline
+// =====================================================================
+
+// POST /api/bookings/:id/agreement  (requester)  { amount, signature }
+// Requester proposes + signs the agreement (simulated e-signature = typed name).
+// Creates/updates the one-per-booking agreement (status 'proposed') and sets
+// bookings.agreed_price. Notifies the worker to review + sign.
+async function proposeAgreement(req, res, next) {
+  const booking = await partyGuard(req, res);
+  if (!booking) return undefined;
+  if (booking.requester_user_id !== req.user.user_id) {
+    return res.status(403).json({ error: 'Only the requester can propose the agreement' });
+  }
+  const { amount, signature } = req.body || {};
+  const amt = Number(amount);
+  if (!Number.isFinite(amt) || amt <= 0) {
+    return res.status(400).json({ error: 'amount must be a positive number' });
+  }
+  if (!signature || !String(signature).trim()) {
+    return res.status(400).json({ error: 'signature is required' });
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query(
+      `INSERT INTO agreement (chat_id, booking_id, worker_id, requester_id, agreed_price,
+                              requester_signature, requester_signed_at, status)
+       VALUES ($1, $2, $3, $4, $5, $6, now(), 'proposed')
+       ON CONFLICT (booking_id) DO UPDATE SET
+         agreed_price = EXCLUDED.agreed_price,
+         requester_signature = EXCLUDED.requester_signature,
+         requester_signed_at = now(),
+         worker_signature = NULL,
+         worker_signed_at = NULL,
+         status = 'proposed'`,
+      [booking.chat_id, booking.booking_id, booking.worker_id, booking.requester_user_id,
+        amt, String(signature).trim()]
+    );
+    await client.query('UPDATE bookings SET agreed_price = $1 WHERE booking_id = $2', [amt, booking.booking_id]);
+    const view = await bookingViewById(booking.booking_id, client);
+    await client.query('COMMIT');
+    await createNotification(pool, booking.worker_user_id, 'agreement_proposed', `Agreement proposed at RWF ${amt} — review and sign.`, booking.booking_id);
+    return res.json(view);
+  } catch (err) {
+    try { await client.query('ROLLBACK'); } catch (_) { /* no active transaction */ }
+    return next(err);
+  } finally {
+    client.release();
+  }
+}
+
+// POST /api/bookings/:id/agreement/sign  (worker)  { signature }
+// Worker signs a proposed agreement → status 'signed'. Notifies the requester to deposit.
+async function signAgreement(req, res, next) {
+  const booking = await partyGuard(req, res);
+  if (!booking) return undefined;
+  if (booking.worker_user_id !== req.user.user_id) {
+    return res.status(403).json({ error: 'Only the worker can sign the agreement' });
+  }
+  if (booking.agreement_status !== 'proposed') {
+    return res.status(400).json({ error: 'No proposed agreement to sign' });
+  }
+  const { signature } = req.body || {};
+  if (!signature || !String(signature).trim()) {
+    return res.status(400).json({ error: 'signature is required' });
+  }
+  try {
+    await pool.query(
+      `UPDATE agreement SET worker_signature = $1, worker_signed_at = now(), status = 'signed'
+       WHERE booking_id = $2`,
+      [String(signature).trim(), booking.booking_id]
+    );
+    await createNotification(pool, booking.requester_user_id, 'agreement_signed', 'Agreement signed — deposit to start.', booking.booking_id);
+    return res.json(await bookingViewById(booking.booking_id));
+  } catch (err) {
+    return next(err);
+  }
+}
+
+// POST /api/bookings/:id/escrow/deposit  (requester)
+// Precondition: agreement 'signed'. Holds the agreed price in escrow.
+async function depositEscrow(req, res, next) {
+  const booking = await partyGuard(req, res);
+  if (!booking) return undefined;
+  if (booking.requester_user_id !== req.user.user_id) {
+    return res.status(403).json({ error: 'Only the requester can deposit' });
+  }
+  if (booking.agreement_status !== 'signed') {
+    return res.status(400).json({ error: 'Both parties must sign the agreement before deposit' });
+  }
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query(
+      `UPDATE payment_status SET amount = $1, status = 'held', deposited_at = now()
+       WHERE booking_id = $2`,
+      [booking.agreed_price, booking.booking_id]
+    );
+    const view = await bookingViewById(booking.booking_id, client);
+    await client.query('COMMIT');
+    await createNotification(pool, booking.worker_user_id, 'escrow_deposited', 'Deposit held in escrow — you can start work.', booking.booking_id);
+    return res.json(view);
+  } catch (err) {
+    try { await client.query('ROLLBACK'); } catch (_) { /* no active transaction */ }
+    return next(err);
+  } finally {
+    client.release();
+  }
+}
+
+// POST /api/bookings/:id/decline  (either party)  { reason }
+// Cancel a booking (before completion) with a reason. Refunds held escrow, voids
+// any agreement, frees the worker, and notifies the other party.
+async function declineBooking(req, res, next) {
+  const booking = await partyGuard(req, res);
+  if (!booking) return undefined;
+  if (!['pending', 'accepted', 'in_progress'].includes(booking.status)) {
+    return res.status(400).json({ error: `Cannot decline a booking with status '${booking.status}'` });
+  }
+  const reason = (req.body || {}).reason;
+  if (!reason || !String(reason).trim()) {
+    return res.status(400).json({ error: 'reason is required' });
+  }
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query(
+      `UPDATE bookings SET status = 'cancelled', cancel_reason = $1 WHERE booking_id = $2`,
+      [String(reason).trim(), booking.booking_id]
+    );
+    // Refund held escrow; void any agreement; free the worker.
+    if (booking.payment_status === 'held') {
+      await client.query(`UPDATE payment_status SET status = 'refunded' WHERE booking_id = $1`, [booking.booking_id]);
+    }
+    if (booking.agreement_id) {
+      await client.query(`UPDATE agreement SET status = 'void' WHERE booking_id = $1`, [booking.booking_id]);
+    }
+    await client.query('UPDATE workers SET is_available = true WHERE worker_id = $1', [booking.worker_id]);
+    const view = await bookingViewById(booking.booking_id, client);
+    await client.query('COMMIT');
+    await createNotification(pool, otherPartyId(booking, req.user.user_id), 'booking_declined', `Booking cancelled: ${String(reason).trim()}`, booking.booking_id);
+    return res.json(view);
+  } catch (err) {
+    try { await client.query('ROLLBACK'); } catch (_) { /* no active transaction */ }
+    return next(err);
+  } finally {
+    client.release();
+  }
+}
+
 module.exports = {
   listBookings,
   getBooking,
   acceptBooking,
-  rejectBooking,
   checkin,
   confirmStart,
   checkout,
@@ -540,5 +702,9 @@ module.exports = {
   getMessages,
   postMessage,
   agreePrice,
+  proposeAgreement,
+  signAgreement,
+  depositEscrow,
+  declineBooking,
   bookingViewById,
 };
