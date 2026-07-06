@@ -15,7 +15,9 @@ DROP TABLE IF EXISTS
   check_in_record,
   notifications,
   saved_worker,
+  agreement,
   messages,
+  chat,
   bookings,
   tasks,
   skill_categories,
@@ -88,17 +90,43 @@ CREATE TABLE bookings (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
--- messages: per-booking chat between the requester and the booked worker.
+-- chat: one persistent conversation per booking.
+CREATE TABLE chat (
+  chat_id    SERIAL PRIMARY KEY,
+  booking_id INTEGER NOT NULL UNIQUE REFERENCES bookings(booking_id) ON DELETE CASCADE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- messages: chat messages between the requester and the booked worker.
 -- A message carries a text body and/or a price offer (amount).
 CREATE TABLE messages (
   message_id     SERIAL PRIMARY KEY,
   booking_id     INTEGER NOT NULL REFERENCES bookings(booking_id) ON DELETE CASCADE,
+  chat_id        INTEGER REFERENCES chat(chat_id) ON DELETE CASCADE,
   sender_user_id INTEGER NOT NULL REFERENCES users(user_id)       ON DELETE CASCADE,
   body           TEXT,
   amount         NUMERIC(12,2),
   created_at     TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX idx_messages_booking ON messages(booking_id);
+CREATE INDEX idx_messages_chat    ON messages(chat_id);
+
+-- agreement: the digital "Finalize Agreement" — one per booking, both parties
+-- sign (typed name = simulated e-signature).
+CREATE TABLE agreement (
+  agreement_id        SERIAL PRIMARY KEY,
+  chat_id             INTEGER NOT NULL REFERENCES chat(chat_id)              ON DELETE CASCADE,
+  booking_id          INTEGER NOT NULL UNIQUE REFERENCES bookings(booking_id) ON DELETE CASCADE,
+  worker_id           INTEGER NOT NULL REFERENCES workers(worker_id)         ON DELETE CASCADE,
+  requester_id        INTEGER NOT NULL REFERENCES users(user_id)             ON DELETE CASCADE,
+  agreed_price        NUMERIC(12,2) NOT NULL,
+  requester_signature TEXT,
+  worker_signature    TEXT,
+  requester_signed_at TIMESTAMPTZ,
+  worker_signed_at    TIMESTAMPTZ,
+  status              VARCHAR(20) NOT NULL DEFAULT 'proposed',  -- proposed | signed | void
+  created_at          TIMESTAMPTZ NOT NULL DEFAULT now()
+);
 
 -- saved_worker: a requester's preferred workers (one-tap rebooking).
 CREATE TABLE saved_worker (
@@ -138,8 +166,10 @@ CREATE TABLE check_in_record (
 CREATE TABLE payment_status (
   payment_id SERIAL PRIMARY KEY,
   booking_id INTEGER NOT NULL UNIQUE REFERENCES bookings(booking_id) ON DELETE CASCADE,
-  amount     NUMERIC(12,2) NOT NULL DEFAULT 0,
-  status     VARCHAR(20)   NOT NULL DEFAULT 'pending'  -- pending | confirmed | released (simulated)
+  amount       NUMERIC(12,2) NOT NULL DEFAULT 0,
+  status       VARCHAR(20)   NOT NULL DEFAULT 'pending',  -- pending | held | released | refunded (simulated escrow)
+  deposited_at TIMESTAMPTZ,
+  released_at  TIMESTAMPTZ
 );
 
 -- reviews: optional, one per booking.

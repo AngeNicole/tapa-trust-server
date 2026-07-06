@@ -14,8 +14,10 @@ async function bookAcceptCheckin() {
   const created = await request(app).post(`/api/bookings/book/${worker.worker_id}`).set(authHeader(requester.token));
   const bookingId = created.body.booking_id;
   await request(app).post(`/api/bookings/${bookingId}/accept`).set(authHeader(worker.token));
-  // agree on a price (gates check-in)
-  await request(app).post(`/api/bookings/${bookingId}/agree-price`).set(authHeader(requester.token)).send({ amount: 5000 });
+  // finalize agreement + deposit escrow (gates check-in)
+  await request(app).post(`/api/bookings/${bookingId}/agreement`).set(authHeader(requester.token)).send({ amount: 5000, signature: 'R' });
+  await request(app).post(`/api/bookings/${bookingId}/agreement/sign`).set(authHeader(worker.token)).send({ signature: 'W' });
+  await request(app).post(`/api/bookings/${bookingId}/escrow/deposit`).set(authHeader(requester.token));
   await request(app).post(`/api/bookings/${bookingId}/checkin`).set(authHeader(worker.token));
   return { requester, worker, bookingId };
 }

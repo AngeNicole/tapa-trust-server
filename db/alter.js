@@ -32,14 +32,19 @@ async function run() {
           OR (table_name = 'notifications' AND column_name = 'booking_id')
           OR (table_name = 'skill_categories' AND column_name = 'status')
           OR (table_name = 'bookings' AND column_name = 'cancel_reason')
+          OR (table_name = 'messages' AND column_name = 'chat_id')
+          OR (table_name = 'payment_status' AND column_name IN ('deposited_at', 'released_at'))
        ORDER BY table_name, column_name`
     );
     console.log('Done — relevant columns now present:');
     for (const r of rows) console.log(`  ${r.table_name}.${r.column_name}`);
     const tbl = await pool.query(
-      `SELECT to_regclass('public.messages') IS NOT NULL AS has_messages`
+      `SELECT to_regclass('public.messages')   IS NOT NULL AS has_messages,
+              to_regclass('public.chat')       IS NOT NULL AS has_chat,
+              to_regclass('public.agreement')  IS NOT NULL AS has_agreement`
     );
-    console.log(`  messages table present: ${tbl.rows[0].has_messages}`);
+    const t = tbl.rows[0];
+    console.log(`  tables — messages: ${t.has_messages}, chat: ${t.has_chat}, agreement: ${t.has_agreement}`);
   } catch (err) {
     console.error('Alter failed:', err.message);
     process.exitCode = 1;

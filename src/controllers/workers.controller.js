@@ -63,6 +63,14 @@ async function listWorkers(req, res, next) {
 
   if (all !== 'true') {
     where.push('w.is_available = true');
+    // 1-hour auto-unavailable fallback: hide workers with a fresh active booking
+    // even if is_available wasn't toggled (computed, no cron).
+    where.push(`NOT EXISTS (
+      SELECT 1 FROM bookings b
+      WHERE b.worker_id = w.worker_id
+        AND b.status IN ('accepted', 'in_progress')
+        AND b.created_at > now() - interval '1 hour'
+    )`);
   }
   if (skill) {
     params.push(`%${skill}%`);

@@ -69,20 +69,26 @@ async function stageBooking(bookingId, taskId, stage) {
   } else if (stage === 'in_progress') {
     await pool.query(`UPDATE bookings SET status = 'in_progress' WHERE booking_id = $1`, [bookingId]);
     await pool.query('UPDATE check_in_record SET start_ts = now(), start_confirmed = true WHERE booking_id = $1', [bookingId]);
-    await pool.query(`UPDATE payment_status SET status = 'confirmed' WHERE booking_id = $1`, [bookingId]);
   } else if (stage === 'checkedOut') {
     await pool.query(`UPDATE bookings SET status = 'in_progress' WHERE booking_id = $1`, [bookingId]);
     await pool.query('UPDATE check_in_record SET start_ts = now(), start_confirmed = true, end_ts = now() WHERE booking_id = $1', [bookingId]);
-    await pool.query(`UPDATE payment_status SET status = 'confirmed' WHERE booking_id = $1`, [bookingId]);
   } else if (stage === 'completed') {
     await pool.query(`UPDATE bookings SET status = 'completed' WHERE booking_id = $1`, [bookingId]);
     await pool.query('UPDATE check_in_record SET start_ts = now(), start_confirmed = true, end_ts = now(), end_confirmed = true WHERE booking_id = $1', [bookingId]);
-    await pool.query(`UPDATE payment_status SET status = 'released' WHERE booking_id = $1`, [bookingId]);
     await pool.query(`UPDATE tasks SET status = 'completed' WHERE task_id = $1`, [taskId]);
   }
-  // Any state at/after check-in implies a price was agreed (check-in gates on it).
+  // States at/after check-in imply an agreed price + escrow deposited (check-in
+  // gates on escrow 'held'); a completed booking has the escrow released.
   if (['checkedIn', 'in_progress', 'checkedOut', 'completed'].includes(stage)) {
     await pool.query('UPDATE bookings SET agreed_price = 5000 WHERE booking_id = $1', [bookingId]);
+    const payStatus = stage === 'completed' ? 'released' : 'held';
+    await pool.query(
+      `UPDATE payment_status SET amount = 5000, status = $1, deposited_at = now() WHERE booking_id = $2`,
+      [payStatus, bookingId]
+    );
+    if (stage === 'completed') {
+      await pool.query(`UPDATE payment_status SET released_at = now() WHERE booking_id = $1`, [bookingId]);
+    }
   }
 }
 

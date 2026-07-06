@@ -34,26 +34,31 @@ describe('booking trust loop — happy path (via book-from-profile)', () => {
     const accepted = await request(app).post(`/api/bookings/${id}/accept`).set(authHeader(worker.token));
     expect(accepted.body.status).toBe('accepted');
 
-    // agree on a price (gates check-in)
-    const agreed = await request(app).post(`/api/bookings/${id}/agree-price`).set(authHeader(requester.token)).send({ amount: 5000 });
-    expect(Number(agreed.body.agreedPrice)).toBe(5000);
+    // finalize agreement (requester proposes+signs, worker signs) then deposit to escrow
+    await request(app).post(`/api/bookings/${id}/agreement`).set(authHeader(requester.token)).send({ amount: 5000, signature: requester.user.name });
+    await request(app).post(`/api/bookings/${id}/agreement/sign`).set(authHeader(worker.token)).send({ signature: worker.user.name });
+    const deposited = await request(app).post(`/api/bookings/${id}/escrow/deposit`).set(authHeader(requester.token));
+    expect(deposited.body.escrow).toMatchObject({ status: 'held' });
+    expect(Number(deposited.body.agreedPrice)).toBe(5000);
 
-    // checkin
+    // checkin (now that escrow is held)
     const checkedIn = await request(app).post(`/api/bookings/${id}/checkin`).set(authHeader(worker.token));
     expect(checkedIn.body.checkedIn).toBe(true);
     expect(checkedIn.body.status).toBe('accepted'); // not yet in_progress
 
-    // confirm-start
+    // confirm-start (escrow stays held)
     const started = await request(app).post(`/api/bookings/${id}/confirm-start`).set(authHeader(requester.token));
-    expect(started.body).toMatchObject({ status: 'in_progress', startConfirmed: true, payment: 'confirmed' });
+    expect(started.body).toMatchObject({ status: 'in_progress', startConfirmed: true });
+    expect(started.body.escrow.status).toBe('held');
 
     // checkout
     const checkedOut = await request(app).post(`/api/bookings/${id}/checkout`).set(authHeader(worker.token));
     expect(checkedOut.body.checkedOut).toBe(true);
 
-    // confirm-completion
+    // confirm-completion → escrow released
     const completed = await request(app).post(`/api/bookings/${id}/confirm-completion`).set(authHeader(requester.token));
-    expect(completed.body).toMatchObject({ status: 'completed', endConfirmed: true, payment: 'released' });
+    expect(completed.body).toMatchObject({ status: 'completed', endConfirmed: true });
+    expect(completed.body.escrow.status).toBe('released');
 
     // the internal task flips to completed
     expect(await taskStatus(created.body.task_id)).toBe('completed');
