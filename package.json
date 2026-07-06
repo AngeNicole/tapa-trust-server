@@ -15,6 +15,7 @@
     "alter:profile": "node db/alter.js alter-add-profile-fields.sql",
     "alter:chat": "node db/alter.js alter-add-booking-chat.sql",
     "alter:category-status": "node db/alter.js alter-add-category-status.sql",
+    "alter:cancel-reason": "node db/alter.js alter-add-cancel-reason.sql",
     "test": "DATABASE_URL=postgres://localhost:5432/tapa_trust_test JWT_SECRET=test-secret jest --runInBand --forceExit"
   },
   "dependencies": {

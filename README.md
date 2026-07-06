@@ -167,6 +167,7 @@ booking views and worker history, written only by booking creation/completion.
 - `POST /bookings/book/:workerId` _(requester)_ — **book from a worker profile** (the requester entry point): auto-creates the task server-side, then a pending booking + payment + check-in. Requesters never post a task.
 - `GET  /bookings` — bookings scoped to the caller (requester sees their own; worker sees theirs)
 - `POST /bookings/:id/accept` _(worker)_ — `pending` → `accepted`
+- `POST /bookings/:id/reject` _(worker)_ — decline the job with a `reason` → `status: 'cancelled'`, `cancelReason` stored, requester notified (allowed only before work starts)
 - `POST /bookings/:id/checkin` _(worker)_ — record start time
 - `POST /bookings/:id/confirm-start` _(requester)_ — `accepted` → `in_progress`, payment → `confirmed`
 - `POST /bookings/:id/checkout` _(worker)_ — record end time

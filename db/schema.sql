@@ -83,6 +83,7 @@ CREATE TABLE bookings (
   worker_id  INTEGER NOT NULL REFERENCES workers(worker_id) ON DELETE CASCADE,
   user_id    INTEGER NOT NULL REFERENCES users(user_id)     ON DELETE CASCADE,
   status     VARCHAR(20) NOT NULL DEFAULT 'pending',  -- pending | accepted | in_progress | completed | cancelled
+  cancel_reason TEXT,                                  -- reason when a worker rejects/cancels (status 'cancelled')
   agreed_price NUMERIC(12,2),                          -- agreed price (null until agree-price); gates check-in
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
