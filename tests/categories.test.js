@@ -30,18 +30,28 @@ describe('category management', () => {
     const adminToken = await createAdmin();
     const cat = await makeCategory(adminToken);
 
-    const upd = await request(app).put(`/api/admin/categories/${cat.category_id}`).set(authHeader(adminToken))
+    const upd = await request(app).patch(`/api/admin/categories/${cat.category_id}`).set(authHeader(adminToken))
       .send({ name: `${cat.name} (edited)`, description: 'new desc' });
     expect(upd.status).toBe(200);
     expect(upd.body).toMatchObject({ name: `${cat.name} (edited)`, description: 'new desc' });
 
-    expect((await request(app).put('/api/admin/categories/99999999').set(authHeader(adminToken)).send({ name: 'x' })).status).toBe(404);
-    expect((await request(app).put(`/api/admin/categories/${cat.category_id}`).set(authHeader(adminToken)).send({})).status).toBe(400);
-    expect((await request(app).put(`/api/admin/categories/${cat.category_id}`).set(authHeader(adminToken)).send({ name: '   ' })).status).toBe(400);
+    // consolidated: name + status in a single PATCH (uses its own category so it
+    // doesn't disturb the duplicate-name check below)
+    const c2 = await makeCategory(adminToken);
+    const combo = await request(app).patch(`/api/admin/categories/${c2.category_id}`).set(authHeader(adminToken))
+      .send({ name: `${c2.name} (v2)`, status: 'archived' });
+    expect(combo.status).toBe(200);
+    expect(combo.body).toMatchObject({ name: `${c2.name} (v2)`, status: 'archived' });
+    // invalid status → 400
+    expect((await request(app).patch(`/api/admin/categories/${c2.category_id}`).set(authHeader(adminToken)).send({ status: 'nope' })).status).toBe(400);
+
+    expect((await request(app).patch('/api/admin/categories/99999999').set(authHeader(adminToken)).send({ name: 'x' })).status).toBe(404);
+    expect((await request(app).patch(`/api/admin/categories/${cat.category_id}`).set(authHeader(adminToken)).send({})).status).toBe(400);
+    expect((await request(app).patch(`/api/admin/categories/${cat.category_id}`).set(authHeader(adminToken)).send({ name: '   ' })).status).toBe(400);
 
     // duplicate name → 409
     const other = await makeCategory(adminToken);
-    const dup = await request(app).put(`/api/admin/categories/${other.category_id}`).set(authHeader(adminToken)).send({ name: `${cat.name} (edited)` });
+    const dup = await request(app).patch(`/api/admin/categories/${other.category_id}`).set(authHeader(adminToken)).send({ name: `${cat.name} (edited)` });
     expect(dup.status).toBe(409);
   });
 
@@ -50,7 +60,7 @@ describe('category management', () => {
     const { token } = await registerRequester();
     const cat = await makeCategory(adminToken);
 
-    const arch = await request(app).patch(`/api/admin/categories/${cat.category_id}/status`).set(authHeader(adminToken)).send({ status: 'archived' });
+    const arch = await request(app).patch(`/api/admin/categories/${cat.category_id}`).set(authHeader(adminToken)).send({ status: 'archived' });
     expect(arch.status).toBe(200);
     expect(arch.body.status).toBe('archived');
 
@@ -65,7 +75,7 @@ describe('category management', () => {
     expect(all.body.map((c) => c.category_id)).toContain(cat.category_id);
 
     // restore
-    const restore = await request(app).patch(`/api/admin/categories/${cat.category_id}/status`).set(authHeader(adminToken)).send({ status: 'active' });
+    const restore = await request(app).patch(`/api/admin/categories/${cat.category_id}`).set(authHeader(adminToken)).send({ status: 'active' });
     expect(restore.body.status).toBe('active');
     const active2 = await request(app).get('/api/categories').set(authHeader(token));
     expect(active2.body.map((c) => c.category_id)).toContain(cat.category_id);
@@ -75,7 +85,7 @@ describe('category management', () => {
     const adminToken = await createAdmin();
     const { token } = await registerRequester();
     const cat = await makeCategory(adminToken);
-    expect((await request(app).patch(`/api/admin/categories/${cat.category_id}/status`).set(authHeader(adminToken)).send({ status: 'nope' })).status).toBe(400);
+    expect((await request(app).patch(`/api/admin/categories/${cat.category_id}`).set(authHeader(adminToken)).send({ status: 'nope' })).status).toBe(400);
     expect((await request(app).get('/api/categories?status=nope').set(authHeader(token))).status).toBe(400);
   });
 
@@ -97,8 +107,8 @@ describe('category management', () => {
     const adminToken = await createAdmin();
     const cat = await makeCategory(adminToken);
     const { token } = await registerRequester();
-    expect((await request(app).put(`/api/admin/categories/${cat.category_id}`).set(authHeader(token)).send({ name: 'x' })).status).toBe(403);
-    expect((await request(app).patch(`/api/admin/categories/${cat.category_id}/status`).set(authHeader(token)).send({ status: 'archived' })).status).toBe(403);
+    expect((await request(app).patch(`/api/admin/categories/${cat.category_id}`).set(authHeader(token)).send({ name: 'x' })).status).toBe(403);
+    expect((await request(app).patch(`/api/admin/categories/${cat.category_id}`).set(authHeader(token)).send({ status: 'archived' })).status).toBe(403);
     expect((await request(app).delete(`/api/admin/categories/${cat.category_id}`).set(authHeader(token))).status).toBe(403);
   });
 });
