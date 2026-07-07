@@ -5,7 +5,6 @@ const {
   listUsers,
   createCategory,
   updateCategory,
-  setCategoryStatus,
   deleteCategory,
   verifyWorker,
   rejectWorker,
@@ -17,8 +16,8 @@ const router = express.Router();
 // verification (simulated). No bookings/payments.
 router.get('/users', auth, requireRole('admin'), listUsers);
 router.post('/categories', auth, requireRole('admin'), createCategory);
-router.put('/categories/:id', auth, requireRole('admin'), updateCategory);
-router.patch('/categories/:id/status', auth, requireRole('admin'), setCategoryStatus);
+// Single edit + archive/restore endpoint (name/description/status, any subset).
+router.patch('/categories/:id', auth, requireRole('admin'), updateCategory);
 router.delete('/categories/:id', auth, requireRole('admin'), deleteCategory);
 router.post('/workers/:workerId/verify', auth, requireRole('admin'), verifyWorker);
 router.post('/workers/:workerId/reject', auth, requireRole('admin'), rejectWorker);

@@ -36,8 +36,11 @@ async function createCategory(req, res, next) {
   }
 }
 
-// PUT /api/admin/categories/:id  (role admin)  body { name?, description? }
-// Edit a category. Only the fields present in the body are changed.
+// PATCH /api/admin/categories/:id  (role admin)  body { name?, description?, status? }
+// Single edit + archive/restore endpoint. Only the fields present in the body are
+// changed. status (if present) must be 'active' | 'archived'. Returns the updated
+// row (same shape as GET /categories). 400 on empty/invalid, 404 if missing,
+// 409 on a duplicate name.
 async function updateCategory(req, res, next) {
   const id = Number(req.params.id);
   if (!Number.isInteger(id)) {
@@ -56,8 +59,14 @@ async function updateCategory(req, res, next) {
   if (body.description !== undefined) {
     fields.push(`description = $${i}`); values.push(body.description ?? null); i += 1;
   }
+  if (body.status !== undefined) {
+    if (!['active', 'archived'].includes(body.status)) {
+      return res.status(400).json({ error: "status must be 'active' or 'archived'" });
+    }
+    fields.push(`status = $${i}`); values.push(body.status); i += 1;
+  }
   if (fields.length === 0) {
-    return res.status(400).json({ error: 'Provide at least one of: name, description' });
+    return res.status(400).json({ error: 'Provide at least one of: name, description, status' });
   }
   try {
     values.push(id);
@@ -74,32 +83,6 @@ async function updateCategory(req, res, next) {
     if (err.code === '23505') {
       return res.status(409).json({ error: 'A category with this name already exists' });
     }
-    return next(err);
-  }
-}
-
-// PATCH /api/admin/categories/:id/status  (role admin)  body { status: 'active'|'archived' }
-// Archive (status='archived') or restore (status='active') a category.
-async function setCategoryStatus(req, res, next) {
-  const id = Number(req.params.id);
-  if (!Number.isInteger(id)) {
-    return res.status(400).json({ error: 'category id must be an integer' });
-  }
-  const { status } = req.body || {};
-  if (!['active', 'archived'].includes(status)) {
-    return res.status(400).json({ error: "status must be 'active' or 'archived'" });
-  }
-  try {
-    const result = await pool.query(
-      `UPDATE skill_categories SET status = $1 WHERE category_id = $2
-       RETURNING category_id, name, description, status`,
-      [status, id]
-    );
-    if (!result.rows[0]) {
-      return res.status(404).json({ error: 'Category not found' });
-    }
-    return res.json(result.rows[0]);
-  } catch (err) {
     return next(err);
   }
 }
@@ -206,7 +189,6 @@ module.exports = {
   listUsers,
   createCategory,
   updateCategory,
-  setCategoryStatus,
   deleteCategory,
   verifyWorker,
   rejectWorker,

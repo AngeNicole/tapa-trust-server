@@ -212,8 +212,7 @@ Types include: `booking_request`, `booking_accepted`, `checkin`, `start_confirme
 
 - `GET  /admin/users` _(admin)_ — list all users
 - `POST   /admin/categories` _(admin)_ — create a skill category (`name`, optional `description`)
-- `PUT    /admin/categories/:id` _(admin)_ — edit `name` and/or `description`
-- `PATCH  /admin/categories/:id/status` _(admin)_ — archive/restore (`status: 'active' | 'archived'`)
+- `PATCH  /admin/categories/:id` _(admin)_ — edit and/or archive/restore: `{ name?, description?, status? }` (any subset; `status` is `active`|`archived`). Returns the updated row. 400 invalid, 404 missing, 409 duplicate name.
 - `DELETE /admin/categories/:id` _(admin)_ — delete a category (tasks that referenced it keep their row)
 - `POST /admin/workers/:workerId/verify` _(admin)_ — mark a worker verified (simulated workflow)
 - `POST /admin/workers/:workerId/reject` _(admin)_ — reject verification (optional `note`); status returns to unverified, worker may resubmit
