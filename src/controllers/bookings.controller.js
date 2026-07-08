@@ -320,7 +320,20 @@ async function getPaymentStatus(req, res, next) {
 async function createWorkerBooking(client, { requesterUserId, workerId, titlePrefix }) {
   const worker = await client.query('SELECT worker_id, user_id, skills FROM workers WHERE worker_id = $1', [workerId]);
   if (!worker.rows[0]) {
-    return { error: 'Worker not found' };
+    return { error: 'Worker not found', status: 404 };
+  }
+
+  // Guard against double-booking: one active (non-terminal) booking per
+  // requester+worker pair. Checked in-transaction so the public-profile →
+  // signup → book path can't bypass the client-side disable.
+  const active = await client.query(
+    `SELECT 1 FROM bookings
+     WHERE user_id = $1 AND worker_id = $2 AND status IN ('pending', 'accepted', 'in_progress')
+     LIMIT 1`,
+    [requesterUserId, workerId]
+  );
+  if (active.rows[0]) {
+    return { error: 'You already have an active booking with this worker', status: 409 };
   }
 
   // Title derives from the worker's first listed skill (comma-separated).
@@ -366,7 +379,7 @@ async function bookWorker(req, res, next, titlePrefix) {
     });
     if (result.error) {
       await client.query('ROLLBACK');
-      return res.status(404).json({ error: result.error });
+      return res.status(result.status || 404).json({ error: result.error });
     }
     const view = await bookingViewById(result.bookingId, client);
     await client.query('COMMIT');
