@@ -164,7 +164,7 @@ booking views and worker history, written only by booking creation/completion.
 
 ### Bookings — the trust loop
 
-- `POST /bookings/book/:workerId` _(requester)_ — **book from a worker profile** (the requester entry point): auto-creates the task server-side, then a pending booking + payment + check-in. Requesters never post a task.
+- `POST /bookings/book/:workerId` _(requester)_ — **book from a worker profile** (the requester entry point): auto-creates the task server-side, then a pending booking + payment + check-in. Requesters never post a task. Returns 409 if the requester already has an active booking with that worker (no double-booking).
 - `GET  /bookings` — bookings scoped to the caller (requester sees their own; worker sees theirs)
 - `GET  /bookings/:id` _(party)_ — a single BookingView (opens a booking + its chat from a notification)
 - `POST /bookings/:id/accept` _(worker)_ — `pending` → `accepted` (worker auto-set unavailable)
