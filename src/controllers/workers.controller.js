@@ -160,6 +160,11 @@ async function getWorker(req, res, next) {
     profile.taskHistory = await getTaskHistory(id);
     profile.activeJobsCount = await getActiveJobsCount(id);
     profile.verification = await getVerificationStatus(id);
+    // Identity evidence (ID/selfie/certificates) is admin-only — requesters and
+    // the public never receive it.
+    if (req.user && req.user.role === 'admin') {
+      Object.assign(profile, await getVerificationEvidence(id));
+    }
     return res.json(profile);
   } catch (err) {
     return next(err);
@@ -299,27 +304,51 @@ async function updateAvailability(req, res, next) {
   }
 }
 
-// POST /api/workers/me/verification  (role worker)  body { reference?, document? }
-// SIMULATED digital-ID step (Tier 1). Stores only a clearly-labelled mock marker
-// in a pending verification_request — NO real NIDA/Smile ID, NO ID-number
-// validation, NO document storage. Admin approves it to mark the worker verified.
+// POST /api/workers/me/verification  (role worker)
+//   body { reference?, document?, idDocument?, selfie?, certificationFiles? }
+// SIMULATED identity step (Tier 1) — NO real NIDA/Smile ID or ID-number checks.
+// The worker uploads an ID document, a selfie, and certificate scans (base64
+// data URLs) so an admin can compare the selfie against the ID by eye and
+// preview the certificates. Stored on a pending verification_request.
 async function submitVerification(req, res, next) {
-  const { reference, document } = req.body || {};
+  const { reference, document, idDocument, selfie, certificationFiles } = req.body || {};
   try {
     const worker = await findOrCreateMyWorker(req.user.user_id);
-    const marker = document
-      ? 'SIMULATED — document uploaded (demo placeholder)'
+    const marker = idDocument || document
+      ? 'SIMULATED — identity evidence uploaded (demo)'
       : `SIMULATED — reference: ${reference || 'demo'}`;
+    // certificationFiles is an array of { name, type, dataUrl }; store as JSONB.
+    const certs = Array.isArray(certificationFiles) ? JSON.stringify(certificationFiles) : null;
     const result = await pool.query(
-      `INSERT INTO verification_request (worker_id, evidence, status)
-       VALUES ($1, $2, 'pending')
+      `INSERT INTO verification_request (worker_id, evidence, status, id_document, selfie, certification_files)
+       VALUES ($1, $2, 'pending', $3, $4, $5)
        RETURNING request_id, worker_id, evidence, status, created_at`,
-      [worker.worker_id, marker]
+      [worker.worker_id, marker, idDocument || null, selfie || null, certs]
     );
     return res.status(201).json({ request: result.rows[0], verification: 'pending', simulated: true });
   } catch (err) {
     return next(err);
   }
+}
+
+// The evidence from a worker's most recent verification_request — ID document,
+// selfie, and certificate files. Admin-only; never exposed on public/requester
+// responses so identity documents stay private.
+async function getVerificationEvidence(workerId, db = pool) {
+  const r = await db.query(
+    `SELECT id_document, selfie, certification_files
+     FROM verification_request
+     WHERE worker_id = $1
+     ORDER BY created_at DESC, request_id DESC
+     LIMIT 1`,
+    [workerId]
+  );
+  const row = r.rows[0] || {};
+  return {
+    idDocument: row.id_document || null,
+    selfie: row.selfie || null,
+    certificationFiles: Array.isArray(row.certification_files) ? row.certification_files : [],
+  };
 }
 
 module.exports = {

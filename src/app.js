@@ -18,7 +18,9 @@ const app = express();
 // In production, restrict CORS to the deployed client origin (CLIENT_ORIGIN).
 // Locally, with CLIENT_ORIGIN unset, allow all origins for convenience.
 app.use(cors({ origin: process.env.CLIENT_ORIGIN || true }));
-app.use(express.json());
+// Verification uploads (ID photo, selfie, certificate scans) are sent as base64
+// data URLs, so raise the body limit well above the 100kb default.
+app.use(express.json({ limit: '15mb' }));
 
 // --- health check (proves the backend is alive; no DB required) ---
 app.get('/api/health', (req, res) => {
