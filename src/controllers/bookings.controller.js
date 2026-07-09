@@ -28,6 +28,8 @@ const BOOKING_VIEW_SQL = `
     b.accepted_at          AS "acceptedAt",
     cir.start_confirmed_at AS "startConfirmedAt",
     cir.end_confirmed_at   AS "endConfirmedAt",
+    cir.safety_expected_at AS "safetyExpectedAt",
+    (cir.end_ts IS NULL AND cir.safety_expected_at IS NOT NULL AND cir.safety_expected_at < now()) AS "safetyOverdue",
     ps.status AS payment,
     ch.chat_id AS "chatId",
     CASE WHEN rv.review_id IS NOT NULL
@@ -138,10 +140,35 @@ async function autoReleaseOverdue() {
   }
 }
 
+// Safety: if a worker set an expected-finish time, hasn't checked out, and it's
+// now past, alert the platform operator (admins) in-app once. No location, no
+// public link — data-minimizing by design. Lazy, like the auto-release sweep.
+async function alertSafetyOverdue() {
+  const due = await pool.query(
+    `SELECT b.booking_id, wu.name AS worker_name
+     FROM bookings b
+     JOIN workers w ON w.worker_id = b.worker_id
+     JOIN users   wu ON wu.user_id = w.user_id
+     JOIN check_in_record cir ON cir.booking_id = b.booking_id
+     WHERE b.status = 'in_progress' AND cir.end_ts IS NULL
+       AND cir.safety_expected_at IS NOT NULL AND cir.safety_expected_at < now()
+       AND COALESCE(cir.safety_alerted, false) = false`
+  );
+  if (!due.rows.length) return;
+  const admins = (await pool.query(`SELECT user_id FROM users WHERE role = 'admin'`)).rows;
+  for (const bk of due.rows) {
+    for (const a of admins) {
+      await createNotification(pool, a.user_id, 'safety_overdue', `Safety check-in overdue: ${bk.worker_name} hasn't checked out by their expected time.`, bk.booking_id);
+    }
+    await pool.query('UPDATE check_in_record SET safety_alerted = true WHERE booking_id = $1', [bk.booking_id]);
+  }
+}
+
 // GET /api/bookings → BookingView[] for the caller (requester or worker).
 async function listBookings(req, res, next) {
   try {
     await autoReleaseOverdue().catch(() => {}); // best-effort self-heal, never blocks the list
+    await alertSafetyOverdue().catch(() => {});
     let where;
     if (req.user.role === 'worker') {
       where = 'WHERE w.user_id = $1';
@@ -225,6 +252,32 @@ async function checkin(req, res, next) {
     }
     await pool.query('UPDATE check_in_record SET start_ts = now() WHERE booking_id = $1', [booking.booking_id]);
     await createNotification(pool, booking.requester_user_id, 'checkin', 'The worker checked in. Confirm start to proceed.', booking.booking_id);
+    return res.json(await bookingViewById(booking.booking_id));
+  } catch (err) {
+    return next(err);
+  }
+}
+
+// POST /api/bookings/:id/safety-timer  (role worker)  body { minutes }
+// Sets the worker's expected finish time (minutes from now); 0/null clears it
+// ("I'm safe"). No location is stored — this only drives an in-app overdue alert.
+async function setSafetyTimer(req, res, next) {
+  try {
+    const booking = await guard(req, res, { role: 'worker' });
+    if (!booking) return undefined;
+    const { minutes } = req.body || {};
+    if (!minutes) {
+      await pool.query('UPDATE check_in_record SET safety_expected_at = NULL, safety_alerted = false WHERE booking_id = $1', [booking.booking_id]);
+    } else {
+      const m = Number(minutes);
+      if (!Number.isFinite(m) || m <= 0 || m > 1440) {
+        return res.status(400).json({ error: 'minutes must be between 1 and 1440' });
+      }
+      await pool.query(
+        `UPDATE check_in_record SET safety_expected_at = now() + ($2 || ' minutes')::interval, safety_alerted = false WHERE booking_id = $1`,
+        [booking.booking_id, String(m)]
+      );
+    }
     return res.json(await bookingViewById(booking.booking_id));
   } catch (err) {
     return next(err);
@@ -777,5 +830,6 @@ module.exports = {
   signAgreement,
   depositEscrow,
   declineBooking,
+  setSafetyTimer,
   bookingViewById,
 };

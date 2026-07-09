@@ -19,6 +19,7 @@ const {
   signAgreement,
   depositEscrow,
   declineBooking,
+  setSafetyTimer,
 } = require('../controllers/bookings.controller');
 const { raiseDispute } = require('../controllers/disputes.controller');
 
@@ -40,6 +41,7 @@ router.get('/:id', auth, getBooking);
 router.post('/:id/accept', auth, requireRole('worker'), acceptBooking);
 router.post('/:id/checkin', auth, requireRole('worker'), checkin);
 router.post('/:id/checkout', auth, requireRole('worker'), checkout);
+router.post('/:id/safety-timer', auth, requireRole('worker'), setSafetyTimer);
 
 // Requester-driven transitions.
 router.post('/:id/confirm-start', auth, requireRole('requester'), confirmStart);

@@ -20,6 +20,11 @@ const STATEMENTS = [
   `ALTER TABLE bookings ADD COLUMN IF NOT EXISTS accepted_at TIMESTAMPTZ`,
   `ALTER TABLE check_in_record ADD COLUMN IF NOT EXISTS start_confirmed_at TIMESTAMPTZ`,
   `ALTER TABLE check_in_record ADD COLUMN IF NOT EXISTS end_confirmed_at TIMESTAMPTZ`,
+  // Safety check-in: worker's expected finish time + whether we've alerted yet.
+  // Data-minimizing — no location stored, no public link; overdue just alerts the
+  // platform operator (admin) in-app.
+  `ALTER TABLE check_in_record ADD COLUMN IF NOT EXISTS safety_expected_at TIMESTAMPTZ`,
+  `ALTER TABLE check_in_record ADD COLUMN IF NOT EXISTS safety_alerted BOOLEAN NOT NULL DEFAULT false`,
 ];
 
 async function ensureSchema() {
