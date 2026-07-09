@@ -10,6 +10,10 @@ const STATEMENTS = [
   `ALTER TABLE verification_request ADD COLUMN IF NOT EXISTS selfie TEXT`,
   `ALTER TABLE verification_request ADD COLUMN IF NOT EXISTS certification_files JSONB`,
   `ALTER TABLE verification_request ADD COLUMN IF NOT EXISTS method VARCHAR(20)`, // 'physical' | 'online'
+  // Match-then-discard: online path stores only the on-device face-match verdict,
+  // never the ID/selfie images (data minimization).
+  `ALTER TABLE verification_request ADD COLUMN IF NOT EXISTS face_match_score INTEGER`,
+  `ALTER TABLE verification_request ADD COLUMN IF NOT EXISTS face_match_passed BOOLEAN`,
   // Dispute resolution: category + who raised + lifecycle status/outcome.
   // (reason = free-text description, ruling = admin note already exist.)
   `ALTER TABLE dispute_resolution ADD COLUMN IF NOT EXISTS category VARCHAR(40)`,

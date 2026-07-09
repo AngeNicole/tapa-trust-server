@@ -362,20 +362,23 @@ async function updateAvailability(req, res, next) {
 // data URLs) so an admin can compare the selfie against the ID by eye and
 // preview the certificates. Stored on a pending verification_request.
 async function submitVerification(req, res, next) {
-  const { reference, document, idDocument, selfie, certificationFiles, method } = req.body || {};
-  const chosen = method === 'online' || method === 'physical' ? method : (idDocument ? 'online' : 'physical');
+  const { faceMatchScore, faceMatchPassed, certificationFiles, method } = req.body || {};
+  const chosen = method === 'online' || method === 'physical' ? method : 'physical';
   try {
     const worker = await findOrCreateMyWorker(req.user.user_id);
+    // Match-then-discard: the ID + selfie are compared IN THE WORKER'S BROWSER and
+    // never sent here. We persist only the verdict — no biometric images stored.
+    const score = Number.isFinite(Number(faceMatchScore)) ? Math.round(Number(faceMatchScore)) : null;
+    const passed = typeof faceMatchPassed === 'boolean' ? faceMatchPassed : null;
     const marker = chosen === 'online'
-      ? 'SIMULATED — online: ID + selfie uploaded for face comparison'
+      ? `SIMULATED — online: on-device face match ${score == null ? 'not conclusive' : `${score}%`} (images not stored)`
       : 'SIMULATED — in-person: awaiting admin/office confirmation';
-    // certificationFiles is an array of { name, type, dataUrl }; store as JSONB.
     const certs = Array.isArray(certificationFiles) ? JSON.stringify(certificationFiles) : null;
     const result = await pool.query(
-      `INSERT INTO verification_request (worker_id, evidence, status, id_document, selfie, certification_files, method)
+      `INSERT INTO verification_request (worker_id, evidence, status, certification_files, method, face_match_score, face_match_passed)
        VALUES ($1, $2, 'pending', $3, $4, $5, $6)
        RETURNING request_id, worker_id, evidence, status, created_at`,
-      [worker.worker_id, marker, idDocument || null, selfie || null, certs, chosen]
+      [worker.worker_id, marker, certs, chosen, score, passed]
     );
     return res.status(201).json({ request: result.rows[0], verification: 'pending', simulated: true });
   } catch (err) {
@@ -388,7 +391,7 @@ async function submitVerification(req, res, next) {
 // responses so identity documents stay private.
 async function getVerificationEvidence(workerId, db = pool) {
   const r = await db.query(
-    `SELECT id_document, selfie, certification_files, method
+    `SELECT certification_files, method, face_match_score, face_match_passed
      FROM verification_request
      WHERE worker_id = $1
      ORDER BY created_at DESC, request_id DESC
@@ -396,11 +399,13 @@ async function getVerificationEvidence(workerId, db = pool) {
     [workerId]
   );
   const row = r.rows[0] || {};
+  // No idDocument/selfie: online biometrics are matched-then-discarded in the
+  // worker's browser; only the verdict is kept.
   return {
-    idDocument: row.id_document || null,
-    selfie: row.selfie || null,
     certificationFiles: Array.isArray(row.certification_files) ? row.certification_files : [],
     verificationMethod: row.method || null,
+    faceMatchScore: row.face_match_score == null ? null : Number(row.face_match_score),
+    faceMatchPassed: row.face_match_passed == null ? null : row.face_match_passed,
   };
 }
 
