@@ -98,9 +98,50 @@ function parseId(value) {
 // List (scoped to caller)
 // =====================================================================
 
+// Worker protection: if the worker checked out and the requester never confirmed
+// completion within 24h, auto-release the held escrow to the worker — UNLESS a
+// dispute is open (a dispute freezes release until an admin rules). Run lazily on
+// booking reads so no scheduler/cron is needed; a no-op when nothing is overdue.
+async function autoReleaseOverdue() {
+  const due = await pool.query(
+    `SELECT b.booking_id, b.task_id, b.worker_id, b.user_id AS requester_user_id, w.user_id AS worker_user_id
+     FROM bookings b
+     JOIN workers w ON w.worker_id = b.worker_id
+     JOIN check_in_record cir ON cir.booking_id = b.booking_id
+     JOIN payment_status  ps  ON ps.booking_id  = b.booking_id
+     WHERE b.status = 'in_progress' AND cir.end_ts IS NOT NULL
+       AND COALESCE(cir.end_confirmed, false) = false
+       AND ps.status = 'held' AND cir.end_ts < now() - interval '24 hours'
+       AND NOT EXISTS (SELECT 1 FROM dispute_resolution d WHERE d.booking_id = b.booking_id AND d.status = 'open')`
+  );
+  for (const bk of due.rows) {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query('UPDATE check_in_record SET end_confirmed = true, end_confirmed_at = now() WHERE booking_id = $1', [bk.booking_id]);
+      await client.query(`UPDATE bookings SET status = 'completed' WHERE booking_id = $1`, [bk.booking_id]);
+      await client.query(`UPDATE tasks SET status = 'completed' WHERE task_id = $1`, [bk.task_id]);
+      const pay = await client.query(
+        `UPDATE payment_status SET status = 'released', released_at = now() WHERE booking_id = $1 RETURNING amount`,
+        [bk.booking_id]
+      );
+      await client.query('INSERT INTO earnings_record (worker_id, booking_id, amount) VALUES ($1, $2, $3)', [bk.worker_id, bk.booking_id, pay.rows[0] ? pay.rows[0].amount : 0]);
+      await client.query('UPDATE workers SET is_available = true WHERE worker_id = $1', [bk.worker_id]);
+      await createNotification(client, bk.worker_user_id, 'completed', 'Auto-released: the requester did not confirm within 24h, so your payment was released.', bk.booking_id);
+      await createNotification(client, bk.requester_user_id, 'completed', 'Payment auto-released to the worker after 24h without confirmation.', bk.booking_id);
+      await client.query('COMMIT');
+    } catch (e) {
+      await client.query('ROLLBACK');
+    } finally {
+      client.release();
+    }
+  }
+}
+
 // GET /api/bookings → BookingView[] for the caller (requester or worker).
 async function listBookings(req, res, next) {
   try {
+    await autoReleaseOverdue().catch(() => {}); // best-effort self-heal, never blocks the list
     let where;
     if (req.user.role === 'worker') {
       where = 'WHERE w.user_id = $1';
