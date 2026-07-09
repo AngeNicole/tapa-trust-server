@@ -1,5 +1,6 @@
 const { pool } = require('../config/db');
 const { createNotification } = require('./notifications.controller');
+const { momoEnabled, requestToPay } = require('../services/momo');
 
 // =====================================================================
 // BookingView — the exact JSON the client expects for a booking.
@@ -752,17 +753,39 @@ async function depositEscrow(req, res, next) {
   if (booking.agreement_status !== 'signed') {
     return res.status(400).json({ error: 'Both parties must sign the agreement before deposit' });
   }
+  // When MoMo sandbox is configured, initiate a real "request to pay" collection
+  // from the requester before holding escrow. Best-effort: if it errors we still
+  // hold (simulated) so the demo/loop is never blocked. No real money (sandbox).
+  let momoReference = null;
+  if (momoEnabled()) {
+    try {
+      const r = await pool.query('SELECT phone FROM users WHERE user_id = $1', [booking.requester_user_id]);
+      const { referenceId } = await requestToPay({
+        amount: booking.agreed_price,
+        phone: r.rows[0] && r.rows[0].phone,
+        externalId: `booking-${booking.booking_id}`,
+        message: `TaPa Trust escrow for booking #${booking.booking_id}`,
+      });
+      momoReference = referenceId;
+    } catch (e) {
+      console.error('[momo] requestToPay failed, falling back to simulated hold:', e.message);
+    }
+  }
+
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
     await client.query(
-      `UPDATE payment_status SET amount = $1, status = 'held', deposited_at = now()
+      `UPDATE payment_status SET amount = $1, status = 'held', deposited_at = now(), momo_reference = $3
        WHERE booking_id = $2`,
-      [booking.agreed_price, booking.booking_id]
+      [booking.agreed_price, booking.booking_id, momoReference]
     );
     const view = await bookingViewById(booking.booking_id, client);
     await client.query('COMMIT');
-    await createNotification(pool, booking.worker_user_id, 'escrow_deposited', 'Deposit held in escrow — you can start work.', booking.booking_id);
+    const held = momoReference
+      ? 'Deposit collected via MoMo (sandbox) and held in escrow — you can start work.'
+      : 'Deposit held in escrow — you can start work.';
+    await createNotification(pool, booking.worker_user_id, 'escrow_deposited', held, booking.booking_id);
     return res.json(view);
   } catch (err) {
     try { await client.query('ROLLBACK'); } catch (_) { /* no active transaction */ }

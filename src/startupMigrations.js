@@ -25,6 +25,8 @@ const STATEMENTS = [
   // platform operator (admin) in-app.
   `ALTER TABLE check_in_record ADD COLUMN IF NOT EXISTS safety_expected_at TIMESTAMPTZ`,
   `ALTER TABLE check_in_record ADD COLUMN IF NOT EXISTS safety_alerted BOOLEAN NOT NULL DEFAULT false`,
+  // MTN MoMo sandbox: reference id of the collection request for a deposit.
+  `ALTER TABLE payment_status ADD COLUMN IF NOT EXISTS momo_reference TEXT`,
 ];
 
 async function ensureSchema() {
