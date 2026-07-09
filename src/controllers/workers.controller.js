@@ -362,19 +362,20 @@ async function updateAvailability(req, res, next) {
 // data URLs) so an admin can compare the selfie against the ID by eye and
 // preview the certificates. Stored on a pending verification_request.
 async function submitVerification(req, res, next) {
-  const { reference, document, idDocument, selfie, certificationFiles } = req.body || {};
+  const { reference, document, idDocument, selfie, certificationFiles, method } = req.body || {};
+  const chosen = method === 'online' || method === 'physical' ? method : (idDocument ? 'online' : 'physical');
   try {
     const worker = await findOrCreateMyWorker(req.user.user_id);
-    const marker = idDocument || document
-      ? 'SIMULATED — identity evidence uploaded (demo)'
-      : `SIMULATED — reference: ${reference || 'demo'}`;
+    const marker = chosen === 'online'
+      ? 'SIMULATED — online: ID + selfie uploaded for face comparison'
+      : 'SIMULATED — in-person: awaiting admin/office confirmation';
     // certificationFiles is an array of { name, type, dataUrl }; store as JSONB.
     const certs = Array.isArray(certificationFiles) ? JSON.stringify(certificationFiles) : null;
     const result = await pool.query(
-      `INSERT INTO verification_request (worker_id, evidence, status, id_document, selfie, certification_files)
-       VALUES ($1, $2, 'pending', $3, $4, $5)
+      `INSERT INTO verification_request (worker_id, evidence, status, id_document, selfie, certification_files, method)
+       VALUES ($1, $2, 'pending', $3, $4, $5, $6)
        RETURNING request_id, worker_id, evidence, status, created_at`,
-      [worker.worker_id, marker, idDocument || null, selfie || null, certs]
+      [worker.worker_id, marker, idDocument || null, selfie || null, certs, chosen]
     );
     return res.status(201).json({ request: result.rows[0], verification: 'pending', simulated: true });
   } catch (err) {
@@ -387,7 +388,7 @@ async function submitVerification(req, res, next) {
 // responses so identity documents stay private.
 async function getVerificationEvidence(workerId, db = pool) {
   const r = await db.query(
-    `SELECT id_document, selfie, certification_files
+    `SELECT id_document, selfie, certification_files, method
      FROM verification_request
      WHERE worker_id = $1
      ORDER BY created_at DESC, request_id DESC
@@ -399,6 +400,7 @@ async function getVerificationEvidence(workerId, db = pool) {
     idDocument: row.id_document || null,
     selfie: row.selfie || null,
     certificationFiles: Array.isArray(row.certification_files) ? row.certification_files : [],
+    verificationMethod: row.method || null,
   };
 }
 

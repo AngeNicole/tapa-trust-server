@@ -9,6 +9,7 @@ const STATEMENTS = [
   `ALTER TABLE verification_request ADD COLUMN IF NOT EXISTS id_document TEXT`,
   `ALTER TABLE verification_request ADD COLUMN IF NOT EXISTS selfie TEXT`,
   `ALTER TABLE verification_request ADD COLUMN IF NOT EXISTS certification_files JSONB`,
+  `ALTER TABLE verification_request ADD COLUMN IF NOT EXISTS method VARCHAR(20)`, // 'physical' | 'online'
   // Dispute resolution: category + who raised + lifecycle status/outcome.
   // (reason = free-text description, ruling = admin note already exist.)
   `ALTER TABLE dispute_resolution ADD COLUMN IF NOT EXISTS category VARCHAR(40)`,
