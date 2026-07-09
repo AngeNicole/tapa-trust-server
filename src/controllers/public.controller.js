@@ -6,6 +6,13 @@ const { pool } = require('../config/db');
 // exact location/address, verification evidence/document content, and any
 // account fields. (The worker model has no location column, and we never join
 // users here, so no location is exposed at all.)
+// Same trust ladder the authed worker routes expose (see workers.controller).
+function computeTier(verification, completedJobs = 0, rating = 0) {
+  if (verification === 'verified') return 'Admin-Certified';
+  if (Number(completedJobs) >= 2 && Number(rating) >= 4) return 'Peer-Verified';
+  return 'Unverified';
+}
+
 function publicWorkerProjection(row) {
   return {
     worker_id: row.worker_id,
@@ -18,6 +25,7 @@ function publicWorkerProjection(row) {
     education: row.education,
     certifications: row.certifications,
     verification: row.verification,
+    tier: computeTier(row.verification, row.completed_jobs, row.rating),
   };
 }
 
