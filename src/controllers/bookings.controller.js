@@ -228,6 +228,10 @@ async function acceptBooking(req, res, next) {
     if (booking.status !== 'pending') {
       return res.status(400).json({ error: `Cannot accept a booking with status '${booking.status}'` });
     }
+    // A price must be agreed with the requester (in chat) before accepting.
+    if (booking.agreed_price == null) {
+      return res.status(400).json({ error: 'Agree a price with the requester in chat before accepting the job.' });
+    }
     await pool.query(`UPDATE bookings SET status = 'accepted', accepted_at = now() WHERE booking_id = $1`, [booking.booking_id]);
     // Auto-unavailable while committed to this job.
     await pool.query('UPDATE workers SET is_available = false WHERE worker_id = $1', [booking.worker_id]);
