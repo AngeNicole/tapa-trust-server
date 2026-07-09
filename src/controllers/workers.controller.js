@@ -237,6 +237,43 @@ async function getMyWorker(req, res, next) {
   }
 }
 
+// GET /api/workers/me/earnings  (role worker)
+// The worker's income record from earnings_record (released payouts), plus a
+// by-category breakdown and average rating — an informal-income statement they
+// can export (financial inclusion / SDG 8).
+async function getMyEarnings(req, res, next) {
+  try {
+    const worker = await findOrCreateMyWorker(req.user.user_id);
+    const wid = worker.worker_id;
+    const rows = (await pool.query(
+      `SELECT er.amount, er.date, t.title AS task_title, sc.name AS category
+       FROM earnings_record er
+       JOIN bookings b ON b.booking_id = er.booking_id
+       JOIN tasks t    ON t.task_id = b.task_id
+       LEFT JOIN skill_categories sc ON sc.category_id = t.category_id
+       WHERE er.worker_id = $1
+       ORDER BY er.date DESC`,
+      [wid]
+    )).rows;
+
+    const records = rows.map((r) => ({ date: r.date, amount: Number(r.amount), taskTitle: r.task_title, category: r.category || 'Other' }));
+    const total = records.reduce((a, r) => a + r.amount, 0);
+    const byCatMap = {};
+    records.forEach((r) => { byCatMap[r.category] = (byCatMap[r.category] || 0) + r.amount; });
+    const byCategory = Object.entries(byCatMap).map(([category, amount]) => ({ category, amount })).sort((a, b) => b.amount - a.amount);
+
+    return res.json({
+      total,
+      count: records.length,
+      avgRating: worker.rating === null ? 0 : Number(worker.rating),
+      byCategory,
+      records,
+    });
+  } catch (err) {
+    return next(err);
+  }
+}
+
 // PUT /api/workers/me  (role worker)  body { skills?, bio?, photo?, education?, certifications? }
 // Partial update: only the fields present in the body are changed. education and
 // certifications are optional free text — trimmed, empty treated as null, capped
@@ -374,4 +411,5 @@ module.exports = {
   updateAvailability,
   submitVerification,
   getVerificationStatus,
+  getMyEarnings,
 };

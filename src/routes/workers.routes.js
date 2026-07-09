@@ -9,6 +9,7 @@ const {
   updateMyWorker,
   updateAvailability,
   submitVerification,
+  getMyEarnings,
 } = require('../controllers/workers.controller');
 
 const router = express.Router();
@@ -18,6 +19,7 @@ router.get('/me', auth, requireRole('worker'), getMyWorker);
 router.put('/me', auth, requireRole('worker'), updateMyWorker);
 router.put('/me/availability', auth, requireRole('worker'), updateAvailability);
 router.post('/me/verification', auth, requireRole('worker'), submitVerification);
+router.get('/me/earnings', auth, requireRole('worker'), getMyEarnings);
 
 router.get('/', auth, listWorkers);
 router.get('/:id', auth, getWorker);
