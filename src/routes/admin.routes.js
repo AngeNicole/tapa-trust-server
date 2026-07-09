@@ -9,7 +9,7 @@ const {
   verifyWorker,
   rejectWorker,
 } = require('../controllers/admin.controller');
-const { listDisputes, getDispute, ruleDispute } = require('../controllers/disputes.controller');
+const { listDisputes, getDispute, ruleDispute, scheduleMeeting } = require('../controllers/disputes.controller');
 
 const router = express.Router();
 
@@ -26,6 +26,7 @@ router.post('/workers/:workerId/reject', auth, requireRole('admin'), rejectWorke
 // Dispute resolution queue + neutral admin ruling.
 router.get('/disputes', auth, requireRole('admin'), listDisputes);
 router.get('/disputes/:id', auth, requireRole('admin'), getDispute);
+router.post('/disputes/:id/meeting', auth, requireRole('admin'), scheduleMeeting);
 router.post('/disputes/:id/rule', auth, requireRole('admin'), ruleDispute);
 
 module.exports = router;

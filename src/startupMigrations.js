@@ -27,6 +27,19 @@ const STATEMENTS = [
   `ALTER TABLE check_in_record ADD COLUMN IF NOT EXISTS safety_alerted BOOLEAN NOT NULL DEFAULT false`,
   // MTN MoMo sandbox: reference id of the collection request for a deposit.
   `ALTER TABLE payment_status ADD COLUMN IF NOT EXISTS momo_reference TEXT`,
+  // Dispute mediation: a meeting is scheduled (mode + detail + time) and both
+  // parties are heard before the admin rules.
+  `ALTER TABLE dispute_resolution ADD COLUMN IF NOT EXISTS meeting_mode VARCHAR(20)`,
+  `ALTER TABLE dispute_resolution ADD COLUMN IF NOT EXISTS meeting_detail TEXT`,
+  `ALTER TABLE dispute_resolution ADD COLUMN IF NOT EXISTS meeting_at TIMESTAMPTZ`,
+  // In-app mediation thread — admin + both parties, recorded in the app.
+  `CREATE TABLE IF NOT EXISTS dispute_message (
+     message_id SERIAL PRIMARY KEY,
+     dispute_id INTEGER NOT NULL REFERENCES dispute_resolution(dispute_id) ON DELETE CASCADE,
+     sender_user_id INTEGER REFERENCES users(user_id) ON DELETE SET NULL,
+     body TEXT NOT NULL,
+     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+   )`,
 ];
 
 async function ensureSchema() {

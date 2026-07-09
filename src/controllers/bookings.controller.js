@@ -49,7 +49,8 @@ const BOOKING_VIEW_SQL = `
     json_build_object('status', ps.status, 'amount', ps.amount) AS escrow,
     (SELECT CASE WHEN d.dispute_id IS NOT NULL THEN json_build_object(
         'disputeId', d.dispute_id, 'status', d.status, 'category', d.category,
-        'raisedBy', d.raised_by, 'outcome', d.outcome, 'createdAt', d.created_at)
+        'raisedBy', d.raised_by, 'outcome', d.outcome, 'createdAt', d.created_at,
+        'meetingMode', d.meeting_mode, 'meetingDetail', d.meeting_detail, 'meetingAt', d.meeting_at)
       ELSE NULL END
      FROM dispute_resolution d WHERE d.booking_id = b.booking_id
      ORDER BY d.created_at DESC LIMIT 1) AS dispute
