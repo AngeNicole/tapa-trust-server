@@ -25,6 +25,9 @@ const BOOKING_VIEW_SQL = `
     COALESCE(cir.end_confirmed, false)   AS "endConfirmed",
     cir.start_ts AS "startTs",
     cir.end_ts   AS "endTs",
+    b.accepted_at          AS "acceptedAt",
+    cir.start_confirmed_at AS "startConfirmedAt",
+    cir.end_confirmed_at   AS "endConfirmedAt",
     ps.status AS payment,
     ch.chat_id AS "chatId",
     CASE WHEN rv.review_id IS NOT NULL
@@ -40,7 +43,13 @@ const BOOKING_VIEW_SQL = `
            'requesterSignature', ag.requester_signature,
            'workerSignature', ag.worker_signature)
          ELSE NULL END AS agreement,
-    json_build_object('status', ps.status, 'amount', ps.amount) AS escrow
+    json_build_object('status', ps.status, 'amount', ps.amount) AS escrow,
+    (SELECT CASE WHEN d.dispute_id IS NOT NULL THEN json_build_object(
+        'disputeId', d.dispute_id, 'status', d.status, 'category', d.category,
+        'raisedBy', d.raised_by, 'outcome', d.outcome, 'createdAt', d.created_at)
+      ELSE NULL END
+     FROM dispute_resolution d WHERE d.booking_id = b.booking_id
+     ORDER BY d.created_at DESC LIMIT 1) AS dispute
   FROM bookings b
   JOIN tasks   t  ON t.task_id   = b.task_id
   JOIN workers w  ON w.worker_id = b.worker_id
@@ -149,7 +158,7 @@ async function acceptBooking(req, res, next) {
     if (booking.status !== 'pending') {
       return res.status(400).json({ error: `Cannot accept a booking with status '${booking.status}'` });
     }
-    await pool.query(`UPDATE bookings SET status = 'accepted' WHERE booking_id = $1`, [booking.booking_id]);
+    await pool.query(`UPDATE bookings SET status = 'accepted', accepted_at = now() WHERE booking_id = $1`, [booking.booking_id]);
     // Auto-unavailable while committed to this job.
     await pool.query('UPDATE workers SET is_available = false WHERE worker_id = $1', [booking.worker_id]);
     await createNotification(pool, booking.requester_user_id, 'booking_accepted', 'Your booking was accepted.', booking.booking_id);
@@ -197,7 +206,7 @@ async function confirmStart(req, res, next) {
     }
     await client.query('BEGIN');
     await client.query(
-      'UPDATE check_in_record SET start_confirmed = true WHERE booking_id = $1',
+      'UPDATE check_in_record SET start_confirmed = true, start_confirmed_at = now() WHERE booking_id = $1',
       [booking.booking_id]
     );
     await client.query(`UPDATE bookings SET status = 'in_progress' WHERE booking_id = $1`, [booking.booking_id]);
@@ -247,9 +256,17 @@ async function confirmCompletion(req, res, next) {
     if (booking.end_confirmed) {
       return res.status(400).json({ error: 'Completion already confirmed' });
     }
+    // Payment freeze: an open dispute blocks completion/release until an admin rules.
+    const openDispute = await pool.query(
+      `SELECT 1 FROM dispute_resolution WHERE booking_id = $1 AND status = 'open' LIMIT 1`,
+      [booking.booking_id]
+    );
+    if (openDispute.rows[0]) {
+      return res.status(409).json({ error: 'This booking is under dispute — an admin must resolve it before payment is released.' });
+    }
     await client.query('BEGIN');
     await client.query(
-      'UPDATE check_in_record SET end_confirmed = true WHERE booking_id = $1',
+      'UPDATE check_in_record SET end_confirmed = true, end_confirmed_at = now() WHERE booking_id = $1',
       [booking.booking_id]
     );
     await client.query(`UPDATE bookings SET status = 'completed' WHERE booking_id = $1`, [booking.booking_id]);

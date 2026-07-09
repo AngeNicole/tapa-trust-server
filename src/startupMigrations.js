@@ -9,6 +9,17 @@ const STATEMENTS = [
   `ALTER TABLE verification_request ADD COLUMN IF NOT EXISTS id_document TEXT`,
   `ALTER TABLE verification_request ADD COLUMN IF NOT EXISTS selfie TEXT`,
   `ALTER TABLE verification_request ADD COLUMN IF NOT EXISTS certification_files JSONB`,
+  // Dispute resolution: category + who raised + lifecycle status/outcome.
+  // (reason = free-text description, ruling = admin note already exist.)
+  `ALTER TABLE dispute_resolution ADD COLUMN IF NOT EXISTS category VARCHAR(40)`,
+  `ALTER TABLE dispute_resolution ADD COLUMN IF NOT EXISTS raised_by VARCHAR(20)`,
+  `ALTER TABLE dispute_resolution ADD COLUMN IF NOT EXISTS status VARCHAR(20) NOT NULL DEFAULT 'open'`,
+  `ALTER TABLE dispute_resolution ADD COLUMN IF NOT EXISTS outcome VARCHAR(20)`,
+  `ALTER TABLE dispute_resolution ADD COLUMN IF NOT EXISTS resolved_at TIMESTAMPTZ`,
+  // Full timestamped loop timeline (check-in/out already have start_ts/end_ts).
+  `ALTER TABLE bookings ADD COLUMN IF NOT EXISTS accepted_at TIMESTAMPTZ`,
+  `ALTER TABLE check_in_record ADD COLUMN IF NOT EXISTS start_confirmed_at TIMESTAMPTZ`,
+  `ALTER TABLE check_in_record ADD COLUMN IF NOT EXISTS end_confirmed_at TIMESTAMPTZ`,
 ];
 
 async function ensureSchema() {

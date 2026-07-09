@@ -9,6 +9,7 @@ const {
   verifyWorker,
   rejectWorker,
 } = require('../controllers/admin.controller');
+const { listDisputes, getDispute, ruleDispute } = require('../controllers/disputes.controller');
 
 const router = express.Router();
 
@@ -21,5 +22,10 @@ router.patch('/categories/:id', auth, requireRole('admin'), updateCategory);
 router.delete('/categories/:id', auth, requireRole('admin'), deleteCategory);
 router.post('/workers/:workerId/verify', auth, requireRole('admin'), verifyWorker);
 router.post('/workers/:workerId/reject', auth, requireRole('admin'), rejectWorker);
+
+// Dispute resolution queue + neutral admin ruling.
+router.get('/disputes', auth, requireRole('admin'), listDisputes);
+router.get('/disputes/:id', auth, requireRole('admin'), getDispute);
+router.post('/disputes/:id/rule', auth, requireRole('admin'), ruleDispute);
 
 module.exports = router;

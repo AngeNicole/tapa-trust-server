@@ -20,6 +20,7 @@ const {
   depositEscrow,
   declineBooking,
 } = require('../controllers/bookings.controller');
+const { raiseDispute } = require('../controllers/disputes.controller');
 
 const router = express.Router();
 
@@ -55,5 +56,7 @@ router.post('/:id/agreement', auth, proposeAgreement);
 router.post('/:id/agreement/sign', auth, signAgreement);
 router.post('/:id/escrow/deposit', auth, depositEscrow);
 router.post('/:id/decline', auth, declineBooking);
+// Either party can raise a dispute; the controller checks booking membership.
+router.post('/:id/dispute', auth, raiseDispute);
 
 module.exports = router;
