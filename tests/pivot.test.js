@@ -13,6 +13,7 @@ async function bookAcceptCheckin() {
   await request(app).put('/api/workers/me').set(authHeader(worker.token)).send({ skills: 'Plumbing' });
   const created = await request(app).post(`/api/bookings/book/${worker.worker_id}`).set(authHeader(requester.token));
   const bookingId = created.body.booking_id;
+  await request(app).post(`/api/bookings/${bookingId}/agree-price`).set(authHeader(requester.token)).send({ amount: 5000 });
   await request(app).post(`/api/bookings/${bookingId}/accept`).set(authHeader(worker.token));
   // finalize agreement + deposit escrow (gates check-in)
   await request(app).post(`/api/bookings/${bookingId}/agreement`).set(authHeader(requester.token)).send({ amount: 5000, signature: 'R' });
@@ -138,7 +139,8 @@ describe('book from worker profile', () => {
     const task = await pool.query('SELECT status FROM tasks WHERE task_id = $1', [res.body.task_id]);
     expect(task.rows[0].status).toBe('assigned');
 
-    // and it's a real loop booking: the worker can accept it
+    // and it's a real loop booking: agree a price, then the worker can accept it
+    await request(app).post(`/api/bookings/${res.body.booking_id}/agree-price`).set(authHeader(requester.token)).send({ amount: 5000 });
     const accepted = await request(app).post(`/api/bookings/${res.body.booking_id}/accept`).set(authHeader(worker.token));
     expect(accepted.body.status).toBe('accepted');
   });

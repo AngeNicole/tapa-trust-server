@@ -14,7 +14,7 @@ async function availableWorkerWithProfile() {
   return worker;
 }
 
-const PUBLIC_KEYS = ['bio', 'certifications', 'completedJobs', 'education', 'name', 'photo', 'rating', 'skills', 'verification', 'worker_id'];
+const PUBLIC_KEYS = ['bio', 'certifications', 'completedJobs', 'education', 'name', 'photo', 'rating', 'skills', 'tier', 'verification', 'worker_id'];
 
 describe('public worker browse (no auth)', () => {
   test('GET /api/public/workers returns available workers with NO token', async () => {

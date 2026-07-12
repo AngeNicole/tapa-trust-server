@@ -49,4 +49,10 @@ module.exports = async function globalSetup() {
   const seed = fs.readFileSync(path.join(__dirname, '..', 'db', 'seed-categories.sql'), 'utf8');
   await client.query(seed);
   await client.end();
+
+  // 3) Apply the idempotent startup migrations (dispute mediation, verification
+  //    evidence + method + face-match, safety check-in, escrow timestamps, MoMo
+  //    reference) so the test DB matches what the deployed app runs on boot.
+  const { ensureSchema } = require('../src/startupMigrations');
+  await ensureSchema();
 };

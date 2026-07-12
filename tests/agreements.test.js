@@ -12,6 +12,8 @@ async function bookedAndAccepted() {
   await request(app).put('/api/workers/me/availability').set(authHeader(worker.token)).send({ is_available: true });
   const created = await request(app).post(`/api/bookings/book/${worker.worker_id}`).set(authHeader(requester.token));
   const bookingId = created.body.booking_id;
+  // A price must be agreed before the worker can accept.
+  await request(app).post(`/api/bookings/${bookingId}/agree-price`).set(authHeader(requester.token)).send({ amount: 5000 });
   await request(app).post(`/api/bookings/${bookingId}/accept`).set(authHeader(worker.token));
   return { requester, worker, bookingId, created };
 }

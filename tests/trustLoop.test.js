@@ -30,6 +30,10 @@ describe('booking trust loop — happy path (via book-from-profile)', () => {
     // the internal task was auto-created and marked assigned
     expect(await taskStatus(created.body.task_id)).toBe('assigned');
 
+    // agree a price first — required before the worker can accept
+    const priced = await request(app).post(`/api/bookings/${id}/agree-price`).set(authHeader(requester.token)).send({ amount: 5000 });
+    expect(priced.status).toBe(200);
+
     // accept
     const accepted = await request(app).post(`/api/bookings/${id}/accept`).set(authHeader(worker.token));
     expect(accepted.body.status).toBe('accepted');
