@@ -18,19 +18,10 @@ function publicWorker(row) {
   };
 }
 
+const { computeTier } = require('../lib/trust');
+
 const WORKER_COLUMNS = 'worker_id, user_id, name, skills, bio, rating, tier, is_available, photo, education, certifications';
 const FREE_TEXT_CAP = 1000;
-
-// Three-tier trust ladder, computed from the worker's real signals so it's always
-// accurate:
-//   Admin-Certified — an admin reviewed & approved their submission (verified).
-//   Peer-Verified   — proven by peers: >= 2 completed jobs with >= 4.0 avg rating.
-//   Unverified      — neither yet.
-function computeTier(verification, completedJobs = 0, rating = 0) {
-  if (verification === 'verified') return 'Admin-Certified';
-  if (Number(completedJobs) >= 2 && Number(rating) >= 4) return 'Peer-Verified';
-  return 'Unverified';
-}
 
 // Derive a worker's simulated verification status from their verification_request
 // rows: approved -> 'verified', any pending -> 'pending', otherwise 'unverified'.
