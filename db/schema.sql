@@ -1,7 +1,7 @@
 -- TaPa Trust — database schema
 -- Tier-1 tables are the active MVP. Tier-2/3 tables are created here so the
--- schema is complete and defensible, but have no endpoints/UI yet (see
--- PROPOSAL_CONTEXT.md §6, §7). Run with:  npm run migrate  (from server/)
+-- schema is complete and defensible, but have no endpoints/UI yet.
+-- Run with:  npm run migrate  (from server/)
 
 -- Idempotent: drop dependents first, then re-create everything.
 DROP TABLE IF EXISTS
