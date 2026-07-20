@@ -2,7 +2,7 @@
 //   • price-before-accept gate
 //   • dispute resolution: freeze → mediation-required → ruling releases
 //   • verification tiers (computed)
-//   • match-then-discard online verification (verdict stored, images never are)
+//   • online verification stores ID + selfie for admin review (admin-only)
 //   • safety check-in overdue flag
 //   • escrow auto-release after 24h
 //   • earnings endpoint shape
@@ -105,34 +105,39 @@ describe('verification tiers', () => {
   });
 });
 
-describe('match-then-discard online verification', () => {
-  test('ID/selfie are NOT stored; only the face-match verdict is', async () => {
+describe('online verification stores ID + selfie for admin review', () => {
+  test('images are persisted and exposed to admins only', async () => {
     const worker = await registerWorker();
     const admin = await createAdmin();
+    const requester = await registerRequester();
+    const ID = 'data:image/jpeg;base64,IDDOCDATA';
+    const SELFIE = 'data:image/jpeg;base64,SELFIEDATA';
     await request(app).post('/api/workers/me/verification').set(authHeader(worker.token)).send({
       method: 'online',
       faceMatchScore: 82,
       faceMatchPassed: true,
-      idDocument: 'data:image/jpeg;base64,SHOULDNOTPERSIST',
-      selfie: 'data:image/jpeg;base64,SHOULDNOTPERSIST',
+      idImage: ID,
+      selfie: SELFIE,
     });
 
+    // The ID + selfie are kept so the admin can confirm the document is genuine.
     const row = (await pool.query(
-      `SELECT id_document, selfie, face_match_score, face_match_passed, method
+      `SELECT id_document, selfie, method
        FROM verification_request WHERE worker_id = $1 ORDER BY request_id DESC LIMIT 1`,
       [worker.worker_id]
     )).rows[0];
-    expect(row.id_document).toBeNull();
-    expect(row.selfie).toBeNull();
-    expect(row.face_match_score).toBe(82);
-    expect(row.face_match_passed).toBe(true);
+    expect(row.id_document).toBe(ID);
+    expect(row.selfie).toBe(SELFIE);
     expect(row.method).toBe('online');
 
-    // admin evidence carries the verdict but no image fields
-    const prof = await request(app).get(`/api/workers/${worker.worker_id}`).set(authHeader(admin));
-    expect(prof.body.faceMatchScore).toBe(82);
-    expect(prof.body).not.toHaveProperty('idDocument');
-    expect(prof.body).not.toHaveProperty('selfie');
+    // Admin evidence carries the images; a requester never receives them.
+    const adminView = await request(app).get(`/api/workers/${worker.worker_id}`).set(authHeader(admin));
+    expect(adminView.body.idDocument).toBe(ID);
+    expect(adminView.body.selfie).toBe(SELFIE);
+
+    const requesterView = await request(app).get(`/api/workers/${worker.worker_id}`).set(authHeader(requester.token));
+    expect(requesterView.body).not.toHaveProperty('idDocument');
+    expect(requesterView.body).not.toHaveProperty('selfie');
   });
 });
 
