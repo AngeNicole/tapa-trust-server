@@ -1,4 +1,6 @@
 const { pool } = require('../config/db');
+const { forPayload } = require('../domain/verification');
+const { dataUrlToBuffer } = require('../lib/dataUrl');
 
 // Shape a workers row for clients. rating is NUMERIC in Postgres (returned as a
 // string by node-pg), so coerce it to a number for the JSON the client expects.
@@ -359,69 +361,26 @@ async function updateAvailability(req, res, next) {
 // data URLs) so an admin can compare the selfie against the ID by eye and
 // preview the certificates. Stored on a pending verification_request.
 async function submitVerification(req, res, next) {
-  const { faceMatchScore, faceMatchPassed, certificationFiles, method, selfie, idImage } = req.body || {};
-  const chosen = method === 'online' || method === 'physical' ? method : 'physical';
+  const { certificationFiles } = req.body || {};
   try {
     const worker = await findOrCreateMyWorker(req.user.user_id);
 
-    // The client's on-device score is only a hint — it could be spoofed. For the
-    // online path we recompute the match HERE from the submitted images and store
-    // OUR verdict, so the stored result is authoritative.
-    let score = Number.isFinite(Number(faceMatchScore)) ? Math.round(Number(faceMatchScore)) : null;
-    let passed = typeof faceMatchPassed === 'boolean' ? faceMatchPassed : null;
-    let serverVerified = false;
-    if (chosen === 'online') {
-      const selfieBuf = dataUrlToBuffer(selfie);
-      const idBuf = dataUrlToBuffer(idImage);
-      if (selfieBuf && idBuf) {
-        try {
-          const { compareFaces } = require('../lib/faceMatch');
-          const result = await compareFaces(selfieBuf, idBuf);
-          // Server verdict overrides the client's claim, match or no face found.
-          score = result.ok ? result.score : null;
-          passed = result.ok ? result.match : false;
-          serverVerified = true;
-        } catch (e) {
-          // Matcher unavailable (e.g. model weights not present). Don't block the
-          // worker — keep the client's hint and let the admin confirm from the
-          // stored ID + selfie, which are the real gate now.
-          console.error('[verification] server face match unavailable:', e.message);
-        }
-      }
-    }
-    // Keep the ID + selfie so the admin can visually confirm the document is a
-    // real ID and that it matches the person (online path only). The biometric
-    // score proves "person matches their photo"; the admin's eyes prove the photo
-    // is a genuine ID — you need both. Physical path uploads neither.
-    const storedId = chosen === 'online' && typeof idImage === 'string' && idImage ? idImage : null;
-    const storedSelfie = chosen === 'online' && typeof selfie === 'string' && selfie && selfie !== 'simulated' ? selfie : null;
-    const marker = chosen === 'online'
-      ? `SIMULATED — online: ${serverVerified ? 'server-verified' : 'on-device'} face match ${score == null ? 'not conclusive' : `${score}%`} (ID + selfie kept for admin review)`
-      : 'SIMULATED — in-person: awaiting admin/office confirmation';
+    // Pick the verification strategy for this submission (online vs in-person) and
+    // let it produce the outcome — polymorphism keeps this controller path free of
+    // any path-specific branching. The online strategy recomputes the face match
+    // server-side (authoritative) and keeps the ID + selfie for admin review.
+    const outcome = await forPayload(req.body || {}).run();
+
     const certs = Array.isArray(certificationFiles) ? JSON.stringify(certificationFiles) : null;
     const result = await pool.query(
       `INSERT INTO verification_request (worker_id, evidence, status, certification_files, method, face_match_score, face_match_passed, id_document, selfie)
        VALUES ($1, $2, 'pending', $3, $4, $5, $6, $7, $8)
        RETURNING request_id, worker_id, evidence, status, created_at`,
-      [worker.worker_id, marker, certs, chosen, score, passed, storedId, storedSelfie]
+      [worker.worker_id, outcome.marker, certs, outcome.method, outcome.score, outcome.passed, outcome.idDocument, outcome.selfie]
     );
     return res.status(201).json({ request: result.rows[0], verification: 'pending', simulated: true });
   } catch (err) {
     return next(err);
-  }
-}
-
-// Decode a base64 data URL (e.g. "data:image/jpeg;base64,....") to a Buffer.
-// Returns null for anything that isn't a non-empty data URL.
-function dataUrlToBuffer(dataUrl) {
-  if (typeof dataUrl !== 'string' || !dataUrl) return null;
-  const comma = dataUrl.indexOf(',');
-  const b64 = comma >= 0 ? dataUrl.slice(comma + 1) : dataUrl;
-  try {
-    const buf = Buffer.from(b64, 'base64');
-    return buf.length ? buf : null;
-  } catch {
-    return null;
   }
 }
 

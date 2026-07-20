@@ -124,6 +124,27 @@ managed database.
 
 - Deployed base URL: **https://tapa-trust-server.onrender.com**
 
+## Object-oriented domain layer (`src/domain/`)
+
+The trust-critical verification logic is modelled with classes so it's encapsulated, extensible, and
+unit-testable independently of Express/Postgres. It demonstrates the four OOP principles directly:
+
+- **Abstraction** — [`VerificationStrategy`](src/domain/verification/VerificationStrategy.js) is an
+  abstract base that defines the contract (`method`, `run()`) and **cannot be instantiated**.
+- **Inheritance** — [`OnlineVerification`](src/domain/verification/OnlineVerification.js) and
+  [`InPersonVerification`](src/domain/verification/InPersonVerification.js) extend it.
+- **Polymorphism** — the [`forPayload()`](src/domain/verification/index.js) factory returns the right
+  subclass, and `submitVerification` calls `.run()` without any path-specific branching.
+- **Encapsulation** — [`FaceMatcher`](src/domain/FaceMatcher.js) hides the lazily-loaded tfjs/face-api
+  model state behind truly private fields (`#tf`, `#faceapi`, `#ready`) and exposes only
+  `compare()` / `scoreForDistance()`. It's injected into `OnlineVerification` (dependency inversion),
+  so the strategies are tested with a stub matcher — no model load — in
+  [`tests/verification-strategy.test.js`](tests/verification-strategy.test.js).
+
+`src/lib/faceMatch.js` remains a thin functional adapter over `FaceMatcher` so existing callers are
+unchanged. (The React client stays idiomatically function-based — OOP lives on the server, where the
+domain model naturally fits it.)
+
 ## API surface
 
 All routes are under `/api`. Every route except `health`, `register`, and `login` requires an
