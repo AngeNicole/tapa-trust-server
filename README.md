@@ -95,16 +95,32 @@ High-level steps (full click-by-click guidance is provided separately during set
 
 1. Create a managed PostgreSQL instance (Render or Railway) and copy its connection string.
 2. Create a Render Web Service from this repository.
-   - Build command: `npm install`
+   - **Build command: `npm install && npm run face:models`** — the second step downloads the
+     face-recognition model weights (~12 MB) that server-side verification needs. **If the build
+     command is just `npm install`, the app boots but the online face match throws “face model load
+     failed” on first use.** (The weights live in `models/`, which is gitignored, so the build must
+     fetch them.)
    - Start command: `npm start`
 3. Set environment variables on the service: `DATABASE_URL`, `JWT_SECRET`, `DATABASE_SSL=true`,
    and `CLIENT_ORIGIN` (the deployed client URL).
 4. Run the migration once against the managed database (locally with `DATABASE_URL` pointed at the
    managed instance, or via a one-off job). To (re)seed categories later without resetting data,
    run `npm run seed` instead of `migrate` (see "Seeding categories" above).
+5. Seed the accounts that can't self-register / are needed for a demo, pointed at the managed DB:
+   ```bash
+   DATABASE_URL="<external-url>" npm run seed:admin   # admin (admins can't self-register)
+   DATABASE_URL="<external-url>" npm run seed:demo    # demo requester + a bookable, verified worker
+   ```
 
 Pushing to `main` triggers an automatic redeploy of the code on Render. Data steps (`migrate`,
-`seed`) are never run by the deploy — run them deliberately against the managed database.
+`seed`, `seed:admin`, `seed:demo`) are never run by the deploy — run them deliberately against the
+managed database.
+
+> **Face matching & memory.** Server-side verification uses `@vladmandic/face-api` on
+> `@tensorflow/tfjs-node` (canvas-free — images are decoded with `tf.node.decodeImage`, matched in
+> memory, and the ID + selfie are stored for admin review). The first match loads TensorFlow + the
+> models into RAM; on Render's **512 MB free tier** this works for light use but heavy concurrent
+> matching can hit the memory ceiling — move to a paid instance if that happens.
 
 - Deployed base URL: **https://tapa-trust-server.onrender.com**
 
