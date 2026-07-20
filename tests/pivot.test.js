@@ -1,5 +1,5 @@
 const {
-  request, app, pool, authHeader, registerRequester, registerWorker, createAdmin, closePool,
+  request, app, pool, authHeader, registerRequester, registerWorker, createAdmin, approveWorker, closePool,
 } = require('./helpers');
 
 afterAll(closePool);
@@ -11,6 +11,7 @@ async function bookAcceptCheckin() {
   const requester = await registerRequester();
   const worker = await registerWorker();
   await request(app).put('/api/workers/me').set(authHeader(worker.token)).send({ skills: 'Plumbing' });
+  await approveWorker(worker.worker_id); // verified-only: must be approved to be booked
   const created = await request(app).post(`/api/bookings/book/${worker.worker_id}`).set(authHeader(requester.token));
   const bookingId = created.body.booking_id;
   await request(app).post(`/api/bookings/${bookingId}/agree-price`).set(authHeader(requester.token)).send({ amount: 5000 });
@@ -30,6 +31,7 @@ async function availableWorker(skills = 'Plumbing') {
   const worker = await registerWorker();
   await request(app).put('/api/workers/me').set(authHeader(worker.token)).send({ skills, bio: 'Experienced worker' });
   await request(app).put('/api/workers/me/availability').set(authHeader(worker.token)).send({ is_available: true });
+  await approveWorker(worker.worker_id); // verified-only: must be approved to surface/book
   return worker;
 }
 
@@ -92,7 +94,7 @@ describe('browse / filter workers', () => {
     expect(ids).not.toContain(hidden.worker_id);
     // carries what a requester needs to evaluate
     const row = res.body.find((w) => w.worker_id === avail.worker_id);
-    expect(row).toMatchObject({ is_available: true, verification: 'unverified' });
+    expect(row).toMatchObject({ is_available: true, verification: 'verified' });
     expect(row).toHaveProperty('completedJobs');
     expect(row).toHaveProperty('rating');
     expect(row).toHaveProperty('skills');
@@ -151,6 +153,28 @@ describe('book from worker profile', () => {
 
     const worker = await registerWorker();
     expect((await request(app).post(`/api/bookings/book/${worker.worker_id}`).set(authHeader(worker.token))).status).toBe(403);
+  });
+
+  test('verified-only: an unverified worker cannot be booked or browsed', async () => {
+    const requester = await registerRequester();
+    // Complete + available, but NOT admin-approved.
+    const worker = await registerWorker();
+    await request(app).put('/api/workers/me').set(authHeader(worker.token)).send({ skills: 'Plumbing', bio: 'Experienced' });
+    await request(app).put('/api/workers/me/availability').set(authHeader(worker.token)).send({ is_available: true });
+
+    // Not in the requester's browse list.
+    const list = await request(app).get('/api/workers').set(authHeader(requester.token));
+    expect(list.body.map((w) => w.worker_id)).not.toContain(worker.worker_id);
+
+    // Booking is refused with 403 until an admin approves.
+    const blocked = await request(app).post(`/api/bookings/book/${worker.worker_id}`).set(authHeader(requester.token));
+    expect(blocked.status).toBe(403);
+    expect(blocked.body.error).toMatch(/not verified/i);
+
+    // After admin approval, booking works.
+    await approveWorker(worker.worker_id);
+    const ok = await request(app).post(`/api/bookings/book/${worker.worker_id}`).set(authHeader(requester.token));
+    expect(ok.status).toBe(201);
   });
 });
 

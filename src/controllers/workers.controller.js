@@ -66,6 +66,12 @@ async function listWorkers(req, res, next) {
 
   if (all !== 'true') {
     where.push('w.is_available = true');
+    // Verified-only: requesters only see admin-approved workers. (Admin oversight
+    // passes all=true to bypass this and see everyone.)
+    where.push(`EXISTS (
+      SELECT 1 FROM verification_request vr
+      WHERE vr.worker_id = w.worker_id AND vr.status = 'approved'
+    )`);
     // 1-hour auto-unavailable fallback: hide workers with a fresh active booking
     // even if is_available wasn't toggled (computed, no cron).
     where.push(`NOT EXISTS (

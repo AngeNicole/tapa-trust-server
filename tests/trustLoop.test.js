@@ -1,5 +1,5 @@
 const {
-  request, app, pool, authHeader, registerRequester, registerWorker, makeBookingAt, closePool,
+  request, app, pool, authHeader, registerRequester, registerWorker, makeBookingAt, approveWorker, closePool,
 } = require('./helpers');
 
 afterAll(closePool);
@@ -16,6 +16,7 @@ describe('booking trust loop — happy path (via book-from-profile)', () => {
     const requester = await registerRequester();
     const worker = await registerWorker();
     await request(app).put('/api/workers/me').set(authHeader(worker.token)).send({ skills: 'Plumbing' });
+    await approveWorker(worker.worker_id); // verified-only: must be approved to be booked
 
     // create the booking via the real product path — no task form
     const created = await request(app).post(`/api/bookings/book/${worker.worker_id}`).set(authHeader(requester.token));

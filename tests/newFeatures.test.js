@@ -7,7 +7,7 @@
 //   • escrow auto-release after 24h
 //   • earnings endpoint shape
 const {
-  request, app, pool, authHeader, registerRequester, registerWorker, createAdmin, makeBookingAt, closePool,
+  request, app, pool, authHeader, registerRequester, registerWorker, createAdmin, makeBookingAt, approveWorker, closePool,
 } = require('./helpers');
 
 afterAll(closePool);
@@ -21,6 +21,7 @@ describe('price before accept', () => {
     const requester = await registerRequester();
     const worker = await registerWorker();
     await completeProfile(worker);
+    await approveWorker(worker.worker_id); // verified-only: must be approved to be booked
     const created = await request(app).post(`/api/bookings/book/${worker.worker_id}`).set(authHeader(requester.token));
     const id = created.body.booking_id;
 
