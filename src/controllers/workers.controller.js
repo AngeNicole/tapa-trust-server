@@ -360,8 +360,7 @@ async function submitVerification(req, res, next) {
 
     // The client's on-device score is only a hint — it could be spoofed. For the
     // online path we recompute the match HERE from the submitted images and store
-    // OUR verdict, so the stored result is authoritative. The images are matched
-    // in memory and discarded — never written to disk or the database.
+    // OUR verdict, so the stored result is authoritative.
     let score = Number.isFinite(Number(faceMatchScore)) ? Math.round(Number(faceMatchScore)) : null;
     let passed = typeof faceMatchPassed === 'boolean' ? faceMatchPassed : null;
     let serverVerified = false;
@@ -369,23 +368,36 @@ async function submitVerification(req, res, next) {
       const selfieBuf = dataUrlToBuffer(selfie);
       const idBuf = dataUrlToBuffer(idImage);
       if (selfieBuf && idBuf) {
-        const { compareFaces } = require('../lib/faceMatch');
-        const result = await compareFaces(selfieBuf, idBuf);
-        // Server verdict overrides the client's claim, match or no face found.
-        score = result.ok ? result.score : null;
-        passed = result.ok ? result.match : false;
-        serverVerified = true;
+        try {
+          const { compareFaces } = require('../lib/faceMatch');
+          const result = await compareFaces(selfieBuf, idBuf);
+          // Server verdict overrides the client's claim, match or no face found.
+          score = result.ok ? result.score : null;
+          passed = result.ok ? result.match : false;
+          serverVerified = true;
+        } catch (e) {
+          // Matcher unavailable (e.g. model weights not present). Don't block the
+          // worker — keep the client's hint and let the admin confirm from the
+          // stored ID + selfie, which are the real gate now.
+          console.error('[verification] server face match unavailable:', e.message);
+        }
       }
     }
+    // Keep the ID + selfie so the admin can visually confirm the document is a
+    // real ID and that it matches the person (online path only). The biometric
+    // score proves "person matches their photo"; the admin's eyes prove the photo
+    // is a genuine ID — you need both. Physical path uploads neither.
+    const storedId = chosen === 'online' && typeof idImage === 'string' && idImage ? idImage : null;
+    const storedSelfie = chosen === 'online' && typeof selfie === 'string' && selfie && selfie !== 'simulated' ? selfie : null;
     const marker = chosen === 'online'
-      ? `SIMULATED — online: ${serverVerified ? 'server-verified' : 'on-device'} face match ${score == null ? 'not conclusive' : `${score}%`} (images not stored)`
+      ? `SIMULATED — online: ${serverVerified ? 'server-verified' : 'on-device'} face match ${score == null ? 'not conclusive' : `${score}%`} (ID + selfie kept for admin review)`
       : 'SIMULATED — in-person: awaiting admin/office confirmation';
     const certs = Array.isArray(certificationFiles) ? JSON.stringify(certificationFiles) : null;
     const result = await pool.query(
-      `INSERT INTO verification_request (worker_id, evidence, status, certification_files, method, face_match_score, face_match_passed)
-       VALUES ($1, $2, 'pending', $3, $4, $5, $6)
+      `INSERT INTO verification_request (worker_id, evidence, status, certification_files, method, face_match_score, face_match_passed, id_document, selfie)
+       VALUES ($1, $2, 'pending', $3, $4, $5, $6, $7, $8)
        RETURNING request_id, worker_id, evidence, status, created_at`,
-      [worker.worker_id, marker, certs, chosen, score, passed]
+      [worker.worker_id, marker, certs, chosen, score, passed, storedId, storedSelfie]
     );
     return res.status(201).json({ request: result.rows[0], verification: 'pending', simulated: true });
   } catch (err) {
@@ -433,7 +445,7 @@ async function faceMatch(req, res, next) {
 // responses so identity documents stay private.
 async function getVerificationEvidence(workerId, db = pool) {
   const r = await db.query(
-    `SELECT certification_files, method, face_match_score, face_match_passed
+    `SELECT certification_files, method, face_match_score, face_match_passed, id_document, selfie
      FROM verification_request
      WHERE worker_id = $1
      ORDER BY created_at DESC, request_id DESC
@@ -441,13 +453,16 @@ async function getVerificationEvidence(workerId, db = pool) {
     [workerId]
   );
   const row = r.rows[0] || {};
-  // No idDocument/selfie: online biometrics are matched-then-discarded in the
-  // worker's browser; only the verdict is kept.
+  // Online path keeps the ID + selfie (data URLs) so the admin can confirm the
+  // document is genuine and matches the person. Admin-only — see the callers,
+  // which never put this on public/requester responses.
   return {
     certificationFiles: Array.isArray(row.certification_files) ? row.certification_files : [],
     verificationMethod: row.method || null,
     faceMatchScore: row.face_match_score == null ? null : Number(row.face_match_score),
     faceMatchPassed: row.face_match_passed == null ? null : row.face_match_passed,
+    idDocument: row.id_document || null,
+    selfie: row.selfie || null,
   };
 }
 
