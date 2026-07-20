@@ -96,11 +96,21 @@ async function stageBooking(bookingId, taskId, stage) {
 // the requested lifecycle state. Returns ids + the current BookingView (read via
 // the real GET /bookings). stages: 'pending' | 'accepted' | 'checkedIn' |
 // 'in_progress' | 'checkedOut' | 'completed'.
+// Mark a worker admin-approved directly in the DB, so they're bookable/visible
+// under the verified-only rule without going through the full admin HTTP flow.
+async function approveWorker(workerId) {
+  await pool.query(
+    `INSERT INTO verification_request (worker_id, evidence, status) VALUES ($1, 'test-approved', 'approved')`,
+    [workerId]
+  );
+}
+
 async function makeBookingAt(stage = 'pending', opts = {}) {
   const requester = opts.requester || (await registerRequester());
   const worker = opts.worker || (await registerWorker({}));
   // give the worker a skill so booking/rebook titles are meaningful
   await request(app).put('/api/workers/me').set(authHeader(worker.token)).send({ skills: 'Plumbing, Electrical', bio: 'test' });
+  await approveWorker(worker.worker_id); // verified-only: must be approved to be booked
 
   const created = await request(app).post(`/api/bookings/book/${worker.worker_id}`).set(authHeader(requester.token));
   const bookingId = created.body.booking_id;
@@ -125,6 +135,7 @@ module.exports = {
   registerWorker,
   createAdmin,
   makeBookingAt,
+  approveWorker,
   closePool,
   uniqueEmail,
 };

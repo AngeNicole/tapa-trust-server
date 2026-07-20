@@ -440,6 +440,18 @@ async function createWorkerBooking(client, { requesterUserId, workerId, titlePre
     return { error: 'Worker not found', status: 404 };
   }
 
+  // Verified-only marketplace: a worker can only be booked once an admin has
+  // approved their verification. Enforced in-transaction so the public-profile →
+  // signup → book path (and any direct API call) can't bypass the browse filter,
+  // which only ever shows verified workers.
+  const approved = await client.query(
+    `SELECT 1 FROM verification_request WHERE worker_id = $1 AND status = 'approved' LIMIT 1`,
+    [workerId]
+  );
+  if (!approved.rows[0]) {
+    return { error: 'This worker is not verified yet, so they can’t be booked.', status: 403 };
+  }
+
   // Guard against double-booking: one active (non-terminal) booking per
   // requester+worker pair. Checked in-transaction so the public-profile →
   // signup → book path can't bypass the client-side disable.

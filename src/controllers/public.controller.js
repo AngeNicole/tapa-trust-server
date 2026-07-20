@@ -50,6 +50,11 @@ async function listPublicWorkers(req, res, next) {
     'w.is_available = true',
     "btrim(coalesce(w.skills, '')) <> ''",
     "btrim(coalesce(w.bio, '')) <> ''",
+    // Verified-only: only admin-approved workers ever surface publicly.
+    `EXISTS (
+      SELECT 1 FROM verification_request vr
+      WHERE vr.worker_id = w.worker_id AND vr.status = 'approved'
+    )`,
     // 1-hour auto-unavailable fallback (computed, no cron).
     `NOT EXISTS (
       SELECT 1 FROM bookings b

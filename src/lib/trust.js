@@ -1,14 +1,16 @@
 // Shared trust helpers — single source of truth so the authed and public worker
 // projections can't drift.
 
-// Three-tier trust ladder, derived from a worker's real signals:
+// Two-tier trust state: a worker is either admin-verified (and therefore
+// bookable / visible in browse) or not. Verification by an admin is the single
+// gate to work — there is no "earn it from jobs" path, because an unverified
+// worker can't be booked in the first place (see createWorkerBooking).
 //   Admin-Certified — an admin reviewed & approved their submission (verified).
-//   Peer-Verified   — proven by peers: >= 2 completed jobs with >= 4.0 avg rating.
-//   Unverified      — neither yet.
-function computeTier(verification, completedJobs = 0, rating = 0) {
-  if (verification === 'verified') return 'Admin-Certified';
-  if (Number(completedJobs) >= 2 && Number(rating) >= 4) return 'Peer-Verified';
-  return 'Unverified';
+//   Unverified      — not yet approved; cannot be booked or surfaced publicly.
+// (completedJobs/rating are accepted for signature compatibility but no longer
+// affect the tier.)
+function computeTier(verification) {
+  return verification === 'verified' ? 'Admin-Certified' : 'Unverified';
 }
 
 module.exports = { computeTier };

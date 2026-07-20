@@ -1,5 +1,5 @@
 const {
-  request, app, authHeader, registerRequester, registerWorker, closePool,
+  request, app, authHeader, registerRequester, registerWorker, approveWorker, closePool,
 } = require('./helpers');
 
 afterAll(closePool);
@@ -8,6 +8,7 @@ async function availableWorker() {
   const worker = await registerWorker();
   await request(app).put('/api/workers/me').set(authHeader(worker.token)).send({ skills: 'Plumbing', bio: 'x' });
   await request(app).put('/api/workers/me/availability').set(authHeader(worker.token)).send({ is_available: true });
+  await approveWorker(worker.worker_id); // verified-only: must be approved to be booked
   return worker;
 }
 

@@ -1,5 +1,5 @@
 const {
-  request, app, pool, authHeader, registerRequester, registerWorker, makeBookingAt, closePool,
+  request, app, pool, authHeader, registerRequester, registerWorker, makeBookingAt, approveWorker, closePool,
 } = require('./helpers');
 
 afterAll(closePool);
@@ -10,6 +10,7 @@ async function bookedAndAccepted() {
   const worker = await registerWorker();
   await request(app).put('/api/workers/me').set(authHeader(worker.token)).send({ skills: 'Plumbing', bio: 'exp' });
   await request(app).put('/api/workers/me/availability').set(authHeader(worker.token)).send({ is_available: true });
+  await approveWorker(worker.worker_id); // verified-only: must be approved to be booked
   const created = await request(app).post(`/api/bookings/book/${worker.worker_id}`).set(authHeader(requester.token));
   const bookingId = created.body.booking_id;
   // A price must be agreed before the worker can accept.

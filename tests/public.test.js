@@ -1,16 +1,17 @@
 const {
-  request, app, pool, authHeader, registerRequester, registerWorker, makeBookingAt, closePool,
+  request, app, pool, authHeader, registerRequester, registerWorker, makeBookingAt, approveWorker, closePool,
 } = require('./helpers');
 
 afterAll(closePool);
 
-// A complete + available worker with all optional fields filled.
+// A complete + available + admin-approved worker (only verified workers surface).
 async function availableWorkerWithProfile() {
   const worker = await registerWorker();
   await request(app).put('/api/workers/me').set(authHeader(worker.token)).send({
     skills: 'Plumbing, Electrical', bio: 'Experienced', education: 'BSc', certifications: 'Cert X',
   });
   await request(app).put('/api/workers/me/availability').set(authHeader(worker.token)).send({ is_available: true });
+  await approveWorker(worker.worker_id); // verified-only: must be approved to surface publicly
   return worker;
 }
 
@@ -23,7 +24,7 @@ describe('public worker browse (no auth)', () => {
     expect(res.status).toBe(200);
     const row = res.body.find((w) => w.worker_id === worker.worker_id);
     expect(row).toBeTruthy();
-    expect(row).toMatchObject({ bio: 'Experienced', verification: 'unverified' });
+    expect(row).toMatchObject({ bio: 'Experienced', verification: 'verified', tier: 'Admin-Certified' });
     expect(row.skills).toContain('Plumbing');
     expect(row).toHaveProperty('rating');
     expect(row).toHaveProperty('completedJobs');
