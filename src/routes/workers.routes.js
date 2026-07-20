@@ -9,6 +9,7 @@ const {
   updateMyWorker,
   updateAvailability,
   submitVerification,
+  faceMatch,
   getMyEarnings,
 } = require('../controllers/workers.controller');
 
@@ -19,6 +20,8 @@ router.get('/me', auth, requireRole('worker'), getMyWorker);
 router.put('/me', auth, requireRole('worker'), updateMyWorker);
 router.put('/me/availability', auth, requireRole('worker'), updateAvailability);
 router.post('/me/verification', auth, requireRole('worker'), submitVerification);
+// Server-side face match (online path): authoritative selfie-vs-ID compare.
+router.post('/me/face-match', auth, requireRole('worker'), faceMatch);
 router.get('/me/earnings', auth, requireRole('worker'), getMyEarnings);
 
 router.get('/', auth, listWorkers);
