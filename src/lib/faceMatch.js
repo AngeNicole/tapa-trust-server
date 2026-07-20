@@ -57,9 +57,13 @@ async function descriptorFor(buffer) {
   let tensor;
   try { tensor = tf.node.decodeImage(buffer, 3); } catch { return null; }
   try {
-    // A more tolerant detector than the 0.5 default, so small/low-contrast faces
-    // on an ID photo are still found (a missed face is worse than a weak one).
-    const opts = new faceapi.SsdMobilenetv1Options({ minConfidence: 0.3, maxResults: 1 });
+    // Very low confidence on purpose: the face photo on a real ID card is only
+    // ~15% of the frame, and SSD (which resizes internally, so absolute pixels
+    // don't help) scores such small faces ~0.16 — the 0.5 default and even 0.3
+    // MISS them, so the ID reads as "no face". 0.1 catches them. It can't wave
+    // impostors through: the verdict is descriptor DISTANCE (the 65% bar), not
+    // the detection confidence.
+    const opts = new faceapi.SsdMobilenetv1Options({ minConfidence: 0.1, maxResults: 1 });
     const det = await faceapi.detectSingleFace(tensor, opts).withFaceLandmarks().withFaceDescriptor();
     return det ? det.descriptor : null;
   } finally {
