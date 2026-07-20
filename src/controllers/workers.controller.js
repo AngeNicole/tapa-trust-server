@@ -353,16 +353,32 @@ async function updateAvailability(req, res, next) {
 // data URLs) so an admin can compare the selfie against the ID by eye and
 // preview the certificates. Stored on a pending verification_request.
 async function submitVerification(req, res, next) {
-  const { faceMatchScore, faceMatchPassed, certificationFiles, method } = req.body || {};
+  const { faceMatchScore, faceMatchPassed, certificationFiles, method, selfie, idImage } = req.body || {};
   const chosen = method === 'online' || method === 'physical' ? method : 'physical';
   try {
     const worker = await findOrCreateMyWorker(req.user.user_id);
-    // Match-then-discard: the ID + selfie are compared IN THE WORKER'S BROWSER and
-    // never sent here. We persist only the verdict — no biometric images stored.
-    const score = Number.isFinite(Number(faceMatchScore)) ? Math.round(Number(faceMatchScore)) : null;
-    const passed = typeof faceMatchPassed === 'boolean' ? faceMatchPassed : null;
+
+    // The client's on-device score is only a hint — it could be spoofed. For the
+    // online path we recompute the match HERE from the submitted images and store
+    // OUR verdict, so the stored result is authoritative. The images are matched
+    // in memory and discarded — never written to disk or the database.
+    let score = Number.isFinite(Number(faceMatchScore)) ? Math.round(Number(faceMatchScore)) : null;
+    let passed = typeof faceMatchPassed === 'boolean' ? faceMatchPassed : null;
+    let serverVerified = false;
+    if (chosen === 'online') {
+      const selfieBuf = dataUrlToBuffer(selfie);
+      const idBuf = dataUrlToBuffer(idImage);
+      if (selfieBuf && idBuf) {
+        const { compareFaces } = require('../lib/faceMatch');
+        const result = await compareFaces(selfieBuf, idBuf);
+        // Server verdict overrides the client's claim, match or no face found.
+        score = result.ok ? result.score : null;
+        passed = result.ok ? result.match : false;
+        serverVerified = true;
+      }
+    }
     const marker = chosen === 'online'
-      ? `SIMULATED — online: on-device face match ${score == null ? 'not conclusive' : `${score}%`} (images not stored)`
+      ? `SIMULATED — online: ${serverVerified ? 'server-verified' : 'on-device'} face match ${score == null ? 'not conclusive' : `${score}%`} (images not stored)`
       : 'SIMULATED — in-person: awaiting admin/office confirmation';
     const certs = Array.isArray(certificationFiles) ? JSON.stringify(certificationFiles) : null;
     const result = await pool.query(
@@ -372,6 +388,41 @@ async function submitVerification(req, res, next) {
       [worker.worker_id, marker, certs, chosen, score, passed]
     );
     return res.status(201).json({ request: result.rows[0], verification: 'pending', simulated: true });
+  } catch (err) {
+    return next(err);
+  }
+}
+
+// Decode a base64 data URL (e.g. "data:image/jpeg;base64,....") to a Buffer.
+// Returns null for anything that isn't a non-empty data URL.
+function dataUrlToBuffer(dataUrl) {
+  if (typeof dataUrl !== 'string' || !dataUrl) return null;
+  const comma = dataUrl.indexOf(',');
+  const b64 = comma >= 0 ? dataUrl.slice(comma + 1) : dataUrl;
+  try {
+    const buf = Buffer.from(b64, 'base64');
+    return buf.length ? buf : null;
+  } catch {
+    return null;
+  }
+}
+
+// Server-side face match — the authoritative, tamper-proof version of the check
+// the client used to run alone. The selfie + ID arrive as base64 data URLs, are
+// decoded to IN-MEMORY buffers, compared, and discarded. Nothing is written to
+// disk or the database; only the caller's later /verification submit persists the
+// verdict. Returns { ok, match, score, distance } or { ok:false, reason }.
+async function faceMatch(req, res, next) {
+  try {
+    const selfieBuf = dataUrlToBuffer((req.body || {}).selfie);
+    const idBuf = dataUrlToBuffer((req.body || {}).idImage);
+    if (!selfieBuf || !idBuf) {
+      return res.status(400).json({ error: 'Both a selfie and an ID image are required.' });
+    }
+    // Lazy-require so the heavy TF/canvas deps only load when a match runs.
+    const { compareFaces } = require('../lib/faceMatch');
+    const result = await compareFaces(selfieBuf, idBuf);
+    return res.status(200).json(result);
   } catch (err) {
     return next(err);
   }
@@ -408,6 +459,7 @@ module.exports = {
   updateMyWorker,
   updateAvailability,
   submitVerification,
+  faceMatch,
   getVerificationStatus,
   getMyEarnings,
 };
