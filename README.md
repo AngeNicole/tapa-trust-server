@@ -118,7 +118,8 @@ managed database.
 
 > **Face matching & memory.** Server-side verification uses `@vladmandic/face-api` on
 > `@tensorflow/tfjs-node` (canvas-free — images are decoded with `tf.node.decodeImage`, matched in
-> memory, and the ID + selfie are stored for admin review). The first match loads TensorFlow + the
+> memory, then discarded: the ID + selfie are never stored, only the pass/fail verdict is kept
+> (match-then-discard)). The first match loads TensorFlow + the
 > models into RAM; on Render's **512 MB free tier** this works for light use but heavy concurrent
 > matching can hit the memory ceiling — move to a paid instance if that happens.
 

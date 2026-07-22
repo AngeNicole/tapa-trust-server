@@ -172,8 +172,9 @@ async function getWorker(req, res, next) {
     profile.activeJobsCount = await getActiveJobsCount(id);
     profile.verification = await getVerificationStatus(id);
     profile.tier = computeTier(profile.verification, profile.taskHistory.length, profile.rating);
-    // Identity evidence (ID/selfie/certificates) is admin-only — requesters and
-    // the public never receive it.
+    // Verification evidence (certificate scans + face-match verdict) is admin-only
+    // — requesters and the public never receive it. Identity images are never
+    // stored (match-then-discard), so idDocument/selfie come back null even here.
     if (req.user && req.user.role === 'admin') {
       Object.assign(profile, await getVerificationEvidence(id));
     }
@@ -357,9 +358,10 @@ async function updateAvailability(req, res, next) {
 // POST /api/workers/me/verification  (role worker)
 //   body { reference?, document?, idDocument?, selfie?, certificationFiles? }
 // SIMULATED identity step (Tier 1) — NO real NIDA/Smile ID or ID-number checks.
-// The worker uploads an ID document, a selfie, and certificate scans (base64
-// data URLs) so an admin can compare the selfie against the ID by eye and
-// preview the certificates. Stored on a pending verification_request.
+// The worker submits an ID document + selfie (compared in memory then discarded —
+// match-then-discard, never stored) and certificate scans (base64 data URLs,
+// which ARE stored so an admin can preview the qualifications). A pending
+// verification_request keeps only the face-match verdict and the certificates.
 async function submitVerification(req, res, next) {
   const { certificationFiles } = req.body || {};
   try {
@@ -367,16 +369,17 @@ async function submitVerification(req, res, next) {
 
     // Pick the verification strategy for this submission (online vs in-person) and
     // let it produce the outcome — polymorphism keeps this controller path free of
-    // any path-specific branching. The online strategy recomputes the face match
-    // server-side (authoritative) and keeps the ID + selfie for admin review.
+    // any path-specific branching. The online strategy compares the ID + selfie
+    // transiently in memory (match-then-discard); only the score and pass/fail
+    // verdict are persisted, never the images — even if the client force-sends them.
     const outcome = await forPayload(req.body || {}).run();
 
     const certs = Array.isArray(certificationFiles) ? JSON.stringify(certificationFiles) : null;
     const result = await pool.query(
-      `INSERT INTO verification_request (worker_id, evidence, status, certification_files, method, face_match_score, face_match_passed, id_document, selfie)
-       VALUES ($1, $2, 'pending', $3, $4, $5, $6, $7, $8)
+      `INSERT INTO verification_request (worker_id, evidence, status, certification_files, method, face_match_score, face_match_passed)
+       VALUES ($1, $2, 'pending', $3, $4, $5, $6)
        RETURNING request_id, worker_id, evidence, status, created_at`,
-      [worker.worker_id, outcome.marker, certs, outcome.method, outcome.score, outcome.passed, outcome.idDocument, outcome.selfie]
+      [worker.worker_id, outcome.marker, certs, outcome.method, outcome.score, outcome.passed]
     );
     return res.status(201).json({ request: result.rows[0], verification: 'pending', simulated: true });
   } catch (err) {
@@ -405,12 +408,13 @@ async function faceMatch(req, res, next) {
   }
 }
 
-// The evidence from a worker's most recent verification_request — ID document,
-// selfie, and certificate files. Admin-only; never exposed on public/requester
-// responses so identity documents stay private.
+// The evidence from a worker's most recent verification_request — the face-match
+// verdict and certificate files. Admin-only; never exposed on public/requester
+// responses. Identity images (ID document + selfie) are match-then-discard: they
+// are never persisted, so idDocument and selfie are always returned as null.
 async function getVerificationEvidence(workerId, db = pool) {
   const r = await db.query(
-    `SELECT certification_files, method, face_match_score, face_match_passed, id_document, selfie
+    `SELECT certification_files, method, face_match_score, face_match_passed
      FROM verification_request
      WHERE worker_id = $1
      ORDER BY created_at DESC, request_id DESC
@@ -418,16 +422,16 @@ async function getVerificationEvidence(workerId, db = pool) {
     [workerId]
   );
   const row = r.rows[0] || {};
-  // Online path keeps the ID + selfie (data URLs) so the admin can confirm the
-  // document is genuine and matches the person. Admin-only — see the callers,
-  // which never put this on public/requester responses.
+  // Certificate files ARE stored and shown to admins (qualification scans). The
+  // ID + selfie are never retained under match-then-discard, so they are always
+  // null here — no one, admin included, can retrieve them.
   return {
     certificationFiles: Array.isArray(row.certification_files) ? row.certification_files : [],
     verificationMethod: row.method || null,
     faceMatchScore: row.face_match_score == null ? null : Number(row.face_match_score),
     faceMatchPassed: row.face_match_passed == null ? null : row.face_match_passed,
-    idDocument: row.id_document || null,
-    selfie: row.selfie || null,
+    idDocument: null,
+    selfie: null,
   };
 }
 

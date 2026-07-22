@@ -3,8 +3,10 @@ const { dataUrlToBuffer } = require('../../lib/dataUrl');
 const { defaultFaceMatcher } = require('../FaceMatcher');
 
 // Online path: recompute the face match on the SERVER (authoritative, tamper-
-// proof) and keep the ID + selfie for admin review. The matcher is injected so a
-// stub can be used in tests (dependency inversion — no model load in unit tests).
+// proof) using match-then-discard — the ID + selfie are compared transiently in
+// memory and never retained (the outcome always carries idDocument: null and
+// selfie: null). The matcher is injected so a stub can be used in tests
+// (dependency inversion — no model load in unit tests).
 class OnlineVerification extends VerificationStrategy {
   constructor(payload = {}, { matcher = defaultFaceMatcher } = {}) {
     super(payload);
@@ -32,19 +34,18 @@ class OnlineVerification extends VerificationStrategy {
         serverVerified = true;
       } catch (e) {
         // Matcher unavailable (e.g. weights missing): don't block the worker —
-        // keep the hint and let the admin confirm from the stored images.
+        // keep the client's on-device hint and let the admin follow up.
         console.error('[verification] server face match unavailable:', e.message);
       }
     }
 
-    // Keep the images so the admin can confirm the document is genuine and the
-    // faces match. 'simulated' means no camera was available — nothing to store.
-    const idDocument = typeof idImage === 'string' && idImage ? idImage : null;
-    const keptSelfie = typeof selfie === 'string' && selfie && selfie !== 'simulated' ? selfie : null;
+    // Match-then-discard: the images were compared in memory above and are never
+    // retained. The outcome carries only the score + pass/fail verdict; the ID
+    // and selfie are always null so they can never be persisted or retrieved.
     const marker = `SIMULATED — online: ${serverVerified ? 'server-verified' : 'on-device'} face match `
-      + `${score == null ? 'not conclusive' : `${score}%`} (ID + selfie kept for admin review)`;
+      + `${score == null ? 'not conclusive' : `${score}%`} (match-then-discard; no images retained)`;
 
-    return { method: 'online', score, passed, marker, idDocument, selfie: keptSelfie };
+    return { method: 'online', score, passed, marker, idDocument: null, selfie: null };
   }
 }
 

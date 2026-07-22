@@ -6,12 +6,18 @@ const { pool } = require('./config/db');
 // no-op once the columns exist. Kept minimal: only columns the running code
 // depends on. A failure here logs but does not stop the server.
 const STATEMENTS = [
+  // id_document + selfie columns are kept so the scrub below can run safely on any
+  // DB that stored images under the earlier design — but no code path ever writes
+  // them again (match-then-discard).
   `ALTER TABLE verification_request ADD COLUMN IF NOT EXISTS id_document TEXT`,
   `ALTER TABLE verification_request ADD COLUMN IF NOT EXISTS selfie TEXT`,
+  // Scrub: wipe any identity images persisted under the earlier "keep for admin
+  // review" design. Runs on every deploy; idempotent (a no-op once all rows are
+  // clean) so previously stored ID/selfie data can never linger or be retrieved.
+  `UPDATE verification_request SET id_document = NULL, selfie = NULL WHERE id_document IS NOT NULL OR selfie IS NOT NULL`,
   `ALTER TABLE verification_request ADD COLUMN IF NOT EXISTS certification_files JSONB`,
   `ALTER TABLE verification_request ADD COLUMN IF NOT EXISTS method VARCHAR(20)`, // 'physical' | 'online'
-  // Online path: id_document + selfie (above) are kept for admin review, plus the
-  // server-computed face-match verdict below.
+  // Server-computed face-match verdict (the only online-path evidence retained).
   `ALTER TABLE verification_request ADD COLUMN IF NOT EXISTS face_match_score INTEGER`,
   `ALTER TABLE verification_request ADD COLUMN IF NOT EXISTS face_match_passed BOOLEAN`,
   // Dispute resolution: category + who raised + lifecycle status/outcome.

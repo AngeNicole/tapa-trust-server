@@ -2,7 +2,7 @@
 //   • price-before-accept gate
 //   • dispute resolution: freeze → mediation-required → ruling releases
 //   • verification tiers (computed)
-//   • online verification stores ID + selfie for admin review (admin-only)
+//   • match-then-discard: online-verification identity images are never persisted
 //   • safety check-in overdue flag
 //   • escrow auto-release after 24h
 //   • earnings endpoint shape
@@ -106,13 +106,14 @@ describe('verification tiers', () => {
   });
 });
 
-describe('online verification stores ID + selfie for admin review', () => {
-  test('images are persisted and exposed to admins only', async () => {
+describe('match-then-discard: identity images are never persisted', () => {
+  test('force-sent ID + selfie are discarded and unretrievable by anyone', async () => {
     const worker = await registerWorker();
     const admin = await createAdmin();
     const requester = await registerRequester();
     const ID = 'data:image/jpeg;base64,IDDOCDATA';
     const SELFIE = 'data:image/jpeg;base64,SELFIEDATA';
+    // Force-send the images anyway — match-then-discard must drop them regardless.
     await request(app).post('/api/workers/me/verification').set(authHeader(worker.token)).send({
       method: 'online',
       faceMatchScore: 82,
@@ -121,21 +122,22 @@ describe('online verification stores ID + selfie for admin review', () => {
       selfie: SELFIE,
     });
 
-    // The ID + selfie are kept so the admin can confirm the document is genuine.
+    // Nothing is persisted: the stored row has NULL images (method still 'online').
     const row = (await pool.query(
       `SELECT id_document, selfie, method
        FROM verification_request WHERE worker_id = $1 ORDER BY request_id DESC LIMIT 1`,
       [worker.worker_id]
     )).rows[0];
-    expect(row.id_document).toBe(ID);
-    expect(row.selfie).toBe(SELFIE);
+    expect(row.id_document).toBeNull();
+    expect(row.selfie).toBeNull();
     expect(row.method).toBe('online');
 
-    // Admin evidence carries the images; a requester never receives them.
+    // Even an admin cannot retrieve the images — they come back null.
     const adminView = await request(app).get(`/api/workers/${worker.worker_id}`).set(authHeader(admin));
-    expect(adminView.body.idDocument).toBe(ID);
-    expect(adminView.body.selfie).toBe(SELFIE);
+    expect(adminView.body.idDocument).toBeNull();
+    expect(adminView.body.selfie).toBeNull();
 
+    // A requester never even has the properties.
     const requesterView = await request(app).get(`/api/workers/${worker.worker_id}`).set(authHeader(requester.token));
     expect(requesterView.body).not.toHaveProperty('idDocument');
     expect(requesterView.body).not.toHaveProperty('selfie');

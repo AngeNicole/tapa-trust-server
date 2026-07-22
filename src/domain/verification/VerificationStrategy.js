@@ -1,6 +1,8 @@
 // Abstract base for a worker verification path (Strategy pattern). Subclasses
 // implement run() to turn a submission into a normalized outcome the controller
-// persists: { method, score, passed, marker, idDocument, selfie }.
+// consumes: { method, score, passed, marker, idDocument, selfie }. idDocument and
+// selfie are always null (match-then-discard — identity images are never
+// persisted); the shape keeps the keys so callers can rely on them.
 //
 // Demonstrates:
 //   • ABSTRACTION  — this base defines the contract and can't be instantiated.

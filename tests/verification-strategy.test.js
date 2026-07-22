@@ -51,31 +51,32 @@ describe('OnlineVerification.run()', () => {
     expect(out.marker).toMatch(/88%/);
   });
 
-  test('keeps the ID + selfie for admin review', async () => {
+  test('match-then-discard: images sent are never retained (idDocument/selfie null)', async () => {
     const out = await new OnlineVerification(
       { selfie: IMG, idImage: IMG },
       { matcher: stubMatcher({ ok: true, match: true, score: 70 }) }
     ).run();
-    expect(out.idDocument).toBe(IMG);
-    expect(out.selfie).toBe(IMG);
+    expect(out.idDocument).toBeNull();
+    expect(out.selfie).toBeNull();
   });
 
-  test('no face found → score null, passed false, but images still kept', async () => {
+  test('no face found → score null, passed false, and images still discarded', async () => {
     const out = await new OnlineVerification(
       { selfie: IMG, idImage: IMG },
       { matcher: stubMatcher({ ok: false, reason: 'No clear face detected on the ID' }) }
     ).run();
     expect(out.score).toBeNull();
     expect(out.passed).toBe(false);
-    expect(out.idDocument).toBe(IMG);
+    expect(out.idDocument).toBeNull();
+    expect(out.selfie).toBeNull();
   });
 
-  test("a 'simulated' selfie (no camera) is not stored", async () => {
+  test("a 'simulated' selfie (no camera) is discarded like any other", async () => {
     const out = await new OnlineVerification(
       { selfie: 'simulated', idImage: IMG, faceMatchScore: 80, faceMatchPassed: true },
       { matcher: stubMatcher({ ok: true, match: true, score: 80 }) }
     ).run();
     expect(out.selfie).toBeNull();
-    expect(out.idDocument).toBe(IMG);
+    expect(out.idDocument).toBeNull();
   });
 });
