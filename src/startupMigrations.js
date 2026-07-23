@@ -51,6 +51,34 @@ const STATEMENTS = [
      body TEXT NOT NULL,
      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
    )`,
+  // Job posts: a requester advertises a job; workers browse and express interest.
+  `CREATE TABLE IF NOT EXISTS job_post (
+     job_id SERIAL PRIMARY KEY,
+     requester_user_id INTEGER NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+     title VARCHAR(160) NOT NULL,
+     description TEXT,
+     category VARCHAR(80),
+     budget INTEGER,
+     location VARCHAR(160),
+     status VARCHAR(20) NOT NULL DEFAULT 'open',
+     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+   )`,
+  // One interest row per (job, worker) — the head of a job conversation.
+  `CREATE TABLE IF NOT EXISTS job_interest (
+     interest_id SERIAL PRIMARY KEY,
+     job_id INTEGER NOT NULL REFERENCES job_post(job_id) ON DELETE CASCADE,
+     worker_id INTEGER NOT NULL REFERENCES workers(worker_id) ON DELETE CASCADE,
+     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+     UNIQUE (job_id, worker_id)
+   )`,
+  // Messages in a job conversation (requester <-> the interested worker).
+  `CREATE TABLE IF NOT EXISTS job_message (
+     message_id SERIAL PRIMARY KEY,
+     interest_id INTEGER NOT NULL REFERENCES job_interest(interest_id) ON DELETE CASCADE,
+     sender_user_id INTEGER REFERENCES users(user_id) ON DELETE SET NULL,
+     body TEXT NOT NULL,
+     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+   )`,
 ];
 
 async function ensureSchema() {
